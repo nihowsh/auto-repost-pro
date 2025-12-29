@@ -160,6 +160,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
           thumbnail_url: metadata?.thumbnail_url,
           channel_id: channel.id,
           manual_schedule_time: manualScheduleTime,
+          duration_seconds: metadata?.duration_seconds || null,
         },
         headers: {
           Authorization: `Bearer ${session.access_token}`,

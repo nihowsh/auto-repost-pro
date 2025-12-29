@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.fetch-video-metadata]
 verify_jwt = false
+
+[functions.video-worker]
+verify_jwt = false
