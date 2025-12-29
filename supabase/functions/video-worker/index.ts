@@ -63,25 +63,78 @@ function extractYouTubeVideoId(url: string): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Download video bytes using a Cobalt instance
-// NOTE: Cobalt v7 (/api/json) was shut down. New API uses POST /.
-// Docs: https://github.com/imputnet/cobalt/blob/main/docs/api.md
+// Download video bytes using yt_download (Deno-native library)
+// ───────────────────────────────────────────────────────────────────────────
+
+async function downloadYouTubeVideo(sourceUrl: string): Promise<{ buffer: ArrayBuffer; filename: string }> {
+  const videoId = extractYouTubeVideoId(sourceUrl);
+  if (!videoId) {
+    throw new Error("Could not extract YouTube video ID from URL");
+  }
+
+  console.log("Downloading YouTube video:", videoId);
+
+  // Dynamic import of yt_download - uses ytDownload and getVideoInfo
+  const { ytDownload, getVideoInfo } = await import("https://deno.land/x/yt_download@1.5/src/mod.ts");
+
+  // Get video info first for logging
+  const info = await getVideoInfo(videoId);
+  if (info) {
+    console.log("Video info retrieved:", info.videoDetails?.title || videoId);
+  }
+
+  // Download the video - get format with both audio and video
+  const stream = await ytDownload(videoId, {
+    hasAudio: true,
+    hasVideo: true,
+  });
+
+  // Collect chunks from the readable stream
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+
+  // Combine chunks into a single buffer
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const filename = `youtube_${videoId}_${Date.now()}.mp4`;
+  console.log("Downloaded", combined.byteLength, "bytes for video:", videoId);
+
+  return { buffer: combined.buffer, filename };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Fallback: Download using Cobalt if available
 // ───────────────────────────────────────────────────────────────────────────
 
 type CobaltResponse =
   | { status: "tunnel" | "redirect"; url: string; filename?: string }
   | { status: "local-processing"; tunnel: string[]; output?: { filename?: string } }
   | { status: "picker"; picker: Array<{ url: string; filename?: string }> }
-  | { status: "error"; error?: { code?: string; context?: any }; text?: string }
-  | Record<string, any>;
+  | { status: "error"; error?: { code?: string }; text?: string }
+  | Record<string, unknown>;
 
-async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuffer; filename: string }> {
-  const baseUrl = (Deno.env.get("COBALT_BASE_URL") || "https://api.cobalt.tools").replace(/\/$/, "");
+async function downloadWithCobalt(sourceUrl: string): Promise<{ buffer: ArrayBuffer; filename: string }> {
+  const baseUrl = Deno.env.get("COBALT_BASE_URL");
+  if (!baseUrl) {
+    throw new Error("COBALT_BASE_URL not configured");
+  }
+
   const apiKey = Deno.env.get("COBALT_API_KEY") || "";
-
   console.log("Requesting download link from Cobalt:", baseUrl);
 
-  const resp = await fetch(`${baseUrl}/`, {
+  const resp = await fetch(`${baseUrl.replace(/\/$/, "")}/`, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -108,25 +161,24 @@ async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuf
   let downloadUrl = "";
   let filename = `video_${Date.now()}.mp4`;
 
-  if (typeof (json as any)?.filename === "string") filename = (json as any).filename;
+  if (typeof (json as Record<string, unknown>)?.filename === "string") {
+    filename = (json as Record<string, unknown>).filename as string;
+  }
 
-  if ((json as any)?.status === "redirect" || (json as any)?.status === "tunnel") {
-    downloadUrl = String((json as any).url || "");
-  } else if ((json as any)?.status === "local-processing") {
-    const tunnels = Array.isArray((json as any).tunnel) ? (json as any).tunnel : [];
+  if (json?.status === "redirect" || json?.status === "tunnel") {
+    downloadUrl = String((json as { url?: string }).url || "");
+  } else if (json?.status === "local-processing") {
+    const tunnels = Array.isArray((json as { tunnel?: string[] }).tunnel) ? (json as { tunnel: string[] }).tunnel : [];
     downloadUrl = tunnels[0] ? String(tunnels[0]) : "";
-    const outName = (json as any)?.output?.filename;
-    if (typeof outName === "string" && outName.trim()) filename = outName;
-  } else if ((json as any)?.status === "picker") {
-    const pick = Array.isArray((json as any).picker) ? (json as any).picker : [];
+  } else if (json?.status === "picker") {
+    const pick = Array.isArray((json as { picker?: Array<{ url: string }> }).picker) ? (json as { picker: Array<{ url: string }> }).picker : [];
     downloadUrl = pick[0]?.url ? String(pick[0].url) : "";
-    if (typeof pick[0]?.filename === "string") filename = pick[0].filename;
-  } else if ((json as any)?.url) {
-    downloadUrl = String((json as any).url);
+  } else if ((json as { url?: string })?.url) {
+    downloadUrl = String((json as { url: string }).url);
   }
 
   if (!downloadUrl) {
-    const msg = (json as any)?.text || (json as any)?.error?.code || "No download URL from Cobalt";
+    const msg = (json as { text?: string })?.text || (json as { error?: { code?: string } })?.error?.code || "No download URL from Cobalt";
     throw new Error(String(msg));
   }
 
@@ -135,13 +187,43 @@ async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuf
   const fileResp = await fetch(downloadUrl);
   if (!fileResp.ok) throw new Error(`Failed to download file: ${fileResp.status}`);
 
-  const contentDisp = fileResp.headers.get("Content-Disposition") ?? "";
-  const match = contentDisp.match(/filename="?([^";]+)"?/i);
-  if (match?.[1]) filename = match[1];
-
   const buffer = await fileResp.arrayBuffer();
   console.log("Downloaded", buffer.byteLength, "bytes");
   return { buffer, filename };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Main download function with fallback
+// ───────────────────────────────────────────────────────────────────────────
+
+async function downloadVideoBytes(sourceUrl: string, sourceType: string): Promise<{ buffer: ArrayBuffer; filename: string }> {
+  const errors: string[] = [];
+
+  // For YouTube, try yt_download first (free, no external service needed)
+  if (sourceType === "youtube") {
+    try {
+      console.log("Attempting download with yt_download library...");
+      return await downloadYouTubeVideo(sourceUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("yt_download failed:", msg);
+      errors.push(`yt_download: ${msg}`);
+    }
+  }
+
+  // Fallback to Cobalt if configured
+  if (Deno.env.get("COBALT_BASE_URL")) {
+    try {
+      console.log("Attempting download with Cobalt...");
+      return await downloadWithCobalt(sourceUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("Cobalt failed:", msg);
+      errors.push(`Cobalt: ${msg}`);
+    }
+  }
+
+  throw new Error(`All download methods failed: ${errors.join("; ")}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -163,7 +245,6 @@ async function uploadToYouTube(
   const { title, description, tags, categoryId = "22", isShort, publishAt } = metadata;
   console.log("Starting YouTube resumable upload for:", title);
 
-  // Step 1: Initiate resumable upload
   const initUrl = new URL("https://www.googleapis.com/upload/youtube/v3/videos");
   initUrl.searchParams.set("uploadType", "resumable");
   initUrl.searchParams.set("part", "snippet,status");
@@ -205,7 +286,6 @@ async function uploadToYouTube(
 
   console.log("Resumable upload URL obtained, uploading bytes...");
 
-  // Step 2: PUT the file bytes
   const uploadResp = await fetch(uploadUrl, {
     method: "PUT",
     headers: {
@@ -235,7 +315,6 @@ async function uploadToYouTube(
 async function processVideo(videoId: string) {
   console.log("=== processVideo start ===", videoId);
 
-  // Fetch video row
   const { data: video, error: vErr } = await supabase
     .from("videos")
     .select("*")
@@ -251,7 +330,6 @@ async function processVideo(videoId: string) {
   const sourceUrl = video.source_url as string;
   const sourceType = video.source_type as string;
 
-  // Fetch channel tokens
   const { data: channel, error: chErr } = await supabase
     .from("youtube_channels")
     .select("*")
@@ -270,7 +348,6 @@ async function processVideo(videoId: string) {
   const expiresAt = new Date(channel.token_expires_at as string).getTime();
   const now = Date.now();
 
-  // Refresh token if needed
   if (!Number.isFinite(expiresAt) || expiresAt - now < 120_000) {
     console.log("Refreshing Google token...");
     const refreshed = await refreshGoogleAccessToken(refreshToken);
@@ -285,13 +362,11 @@ async function processVideo(videoId: string) {
   // 1. Downloading
   await updateVideoStatus(videoId, "downloading");
   let videoBuffer: ArrayBuffer;
-  let storagePath: string;
   try {
-    const { buffer, filename } = await downloadVideoBytes(sourceUrl);
+    const { buffer, filename } = await downloadVideoBytes(sourceUrl, sourceType);
     videoBuffer = buffer;
 
-    // Save to Supabase storage
-    storagePath = `${userId}/${videoId}/${filename}`;
+    const storagePath = `${userId}/${videoId}/${filename}`;
     console.log("Uploading to storage:", storagePath);
 
     const { error: upErr } = await supabase.storage
@@ -303,7 +378,6 @@ async function processVideo(videoId: string) {
 
     if (upErr) {
       console.warn("Storage upload warning:", upErr);
-      // Non-fatal: YouTube upload can still proceed
     } else {
       await supabase.from("videos").update({ video_file_path: storagePath }).eq("id", videoId);
     }
@@ -313,7 +387,7 @@ async function processVideo(videoId: string) {
     return;
   }
 
-  // 2. Uploading to YouTube (or scheduling on YouTube)
+  // 2. Uploading to YouTube
   await updateVideoStatus(videoId, "uploading");
   try {
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
@@ -359,8 +433,13 @@ serve(async (req) => {
       });
     }
 
-    // Run processing as a background task so we can respond immediately
-    (globalThis as any).EdgeRuntime?.waitUntil?.(processVideo(videoId)) ?? processVideo(videoId).catch(console.error);
+    // deno-lint-ignore no-explicit-any
+    const EdgeRuntime = (globalThis as any).EdgeRuntime;
+    if (EdgeRuntime?.waitUntil) {
+      EdgeRuntime.waitUntil(processVideo(videoId));
+    } else {
+      processVideo(videoId).catch(console.error);
+    }
 
     return new Response(JSON.stringify({ success: true, message: "Processing started" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
