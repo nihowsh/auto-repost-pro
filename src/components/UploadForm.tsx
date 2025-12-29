@@ -24,7 +24,7 @@ interface UploadFormProps {
 }
 
 export function UploadForm({ onSuccess }: UploadFormProps) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const { channel } = useYouTubeChannel();
   const { toast } = useToast();
   
@@ -129,21 +129,28 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
 
     setLoading(true);
     try {
+      if (!session?.access_token) {
+        throw new Error('Please sign in again');
+      }
+
       let manualScheduleTime = null;
       if (useManualSchedule && manualDate && manualTime) {
         manualScheduleTime = new Date(`${manualDate}T${manualTime}`).toISOString();
       }
 
-      const { error } = await supabase.functions.invoke('process-video', {
+      const { data, error } = await supabase.functions.invoke('process-video', {
         body: {
           source_url: videoUrl,
           source_type: sourceType,
-          title: title || metadata?.title,
-          description: description || metadata?.description,
+          title: title || metadata?.title || 'Untitled',
+          description: description || metadata?.description || '',
           tags: tags.split(',').map(t => t.trim()).filter(Boolean),
           thumbnail_url: metadata?.thumbnail_url,
           channel_id: channel.id,
           manual_schedule_time: manualScheduleTime,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
         },
       });
 
