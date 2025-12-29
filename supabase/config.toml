@@ -2,3 +2,9 @@ project_id = "qhzwksaeogpwgvttcxej"
 
 [functions.youtube-auth]
 verify_jwt = false
+
+[functions.process-video]
+verify_jwt = false
+
+[functions.fetch-video-metadata]
+verify_jwt = false
