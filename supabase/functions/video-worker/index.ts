@@ -63,21 +63,38 @@ function extractYouTubeVideoId(url: string): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Download video bytes using Cobalt API (free public API for downloading)
+// Download video bytes using a Cobalt instance
+// NOTE: Cobalt v7 (/api/json) was shut down. New API uses POST /.
+// Docs: https://github.com/imputnet/cobalt/blob/main/docs/api.md
 // ───────────────────────────────────────────────────────────────────────────
 
-async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuffer; filename: string }> {
-  console.log("Requesting download link from Cobalt...");
+type CobaltResponse =
+  | { status: "tunnel" | "redirect"; url: string; filename?: string }
+  | { status: "local-processing"; tunnel: string[]; output?: { filename?: string } }
+  | { status: "picker"; picker: Array<{ url: string; filename?: string }> }
+  | { status: "error"; error?: { code?: string; context?: any }; text?: string }
+  | Record<string, any>;
 
-  // Cobalt free instance – we POST to get a download URL
-  const cobaltUrl = "https://api.cobalt.tools/api/json";
-  const resp = await fetch(cobaltUrl, {
+async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuffer; filename: string }> {
+  const baseUrl = (Deno.env.get("COBALT_BASE_URL") || "https://api.cobalt.tools").replace(/\/$/, "");
+  const apiKey = Deno.env.get("COBALT_API_KEY") || "";
+
+  console.log("Requesting download link from Cobalt:", baseUrl);
+
+  const resp = await fetch(`${baseUrl}/`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
       Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(apiKey ? { Authorization: `Api-Key ${apiKey}` } : {}),
     },
-    body: JSON.stringify({ url: sourceUrl, vCodec: "h264", vQuality: "720", isAudioOnly: false }),
+    body: JSON.stringify({
+      url: sourceUrl,
+      videoQuality: "720",
+      youtubeVideoCodec: "h264",
+      youtubeVideoContainer: "mp4",
+      downloadMode: "auto",
+    }),
   });
 
   if (!resp.ok) {
@@ -85,29 +102,42 @@ async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuf
     throw new Error(`Cobalt API error ${resp.status}: ${txt}`);
   }
 
-  const json = await resp.json();
+  const json = (await resp.json()) as CobaltResponse;
   console.log("Cobalt response:", JSON.stringify(json).slice(0, 500));
 
-  // Cobalt returns { status: "stream"|"redirect", url: "..." } or { status: "picker", picker: [...] }
   let downloadUrl = "";
-  if (json.status === "redirect" || json.status === "stream") {
-    downloadUrl = json.url;
-  } else if (json.status === "picker" && Array.isArray(json.picker) && json.picker.length) {
-    downloadUrl = json.picker[0].url;
-  } else if (json.url) {
-    downloadUrl = json.url;
+  let filename = `video_${Date.now()}.mp4`;
+
+  if (typeof (json as any)?.filename === "string") filename = (json as any).filename;
+
+  if ((json as any)?.status === "redirect" || (json as any)?.status === "tunnel") {
+    downloadUrl = String((json as any).url || "");
+  } else if ((json as any)?.status === "local-processing") {
+    const tunnels = Array.isArray((json as any).tunnel) ? (json as any).tunnel : [];
+    downloadUrl = tunnels[0] ? String(tunnels[0]) : "";
+    const outName = (json as any)?.output?.filename;
+    if (typeof outName === "string" && outName.trim()) filename = outName;
+  } else if ((json as any)?.status === "picker") {
+    const pick = Array.isArray((json as any).picker) ? (json as any).picker : [];
+    downloadUrl = pick[0]?.url ? String(pick[0].url) : "";
+    if (typeof pick[0]?.filename === "string") filename = pick[0].filename;
+  } else if ((json as any)?.url) {
+    downloadUrl = String((json as any).url);
   }
 
-  if (!downloadUrl) throw new Error("No download URL from Cobalt");
+  if (!downloadUrl) {
+    const msg = (json as any)?.text || (json as any)?.error?.code || "No download URL from Cobalt";
+    throw new Error(String(msg));
+  }
 
-  console.log("Downloading file from:", downloadUrl.slice(0, 100));
+  console.log("Downloading file from:", downloadUrl.slice(0, 120));
 
   const fileResp = await fetch(downloadUrl);
   if (!fileResp.ok) throw new Error(`Failed to download file: ${fileResp.status}`);
 
   const contentDisp = fileResp.headers.get("Content-Disposition") ?? "";
-  const match = contentDisp.match(/filename="?([^"]+)"?/i);
-  const filename = match?.[1] ?? `video_${Date.now()}.mp4`;
+  const match = contentDisp.match(/filename="?([^";]+)"?/i);
+  if (match?.[1]) filename = match[1];
 
   const buffer = await fileResp.arrayBuffer();
   console.log("Downloaded", buffer.byteLength, "bytes");
@@ -121,15 +151,24 @@ async function downloadVideoBytes(sourceUrl: string): Promise<{ buffer: ArrayBuf
 async function uploadToYouTube(
   accessToken: string,
   videoBuffer: ArrayBuffer,
-  metadata: { title: string; description: string; tags: string[]; categoryId?: string; isShort?: boolean }
+  metadata: {
+    title: string;
+    description: string;
+    tags: string[];
+    categoryId?: string;
+    isShort?: boolean;
+    publishAt?: string | null;
+  }
 ): Promise<string> {
-  const { title, description, tags, categoryId = "22", isShort } = metadata;
+  const { title, description, tags, categoryId = "22", isShort, publishAt } = metadata;
   console.log("Starting YouTube resumable upload for:", title);
 
   // Step 1: Initiate resumable upload
   const initUrl = new URL("https://www.googleapis.com/upload/youtube/v3/videos");
   initUrl.searchParams.set("uploadType", "resumable");
   initUrl.searchParams.set("part", "snippet,status");
+
+  const scheduled = Boolean(publishAt && new Date(publishAt).getTime() > Date.now() + 30_000);
 
   const initBody = {
     snippet: {
@@ -139,7 +178,8 @@ async function uploadToYouTube(
       categoryId,
     },
     status: {
-      privacyStatus: "public",
+      privacyStatus: scheduled ? "private" : "public",
+      ...(scheduled ? { publishAt } : {}),
       selfDeclaredMadeForKids: false,
     },
   };
@@ -273,7 +313,7 @@ async function processVideo(videoId: string) {
     return;
   }
 
-  // 2. Uploading to YouTube
+  // 2. Uploading to YouTube (or scheduling on YouTube)
   await updateVideoStatus(videoId, "uploading");
   try {
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
@@ -281,14 +321,18 @@ async function processVideo(videoId: string) {
       description: (video.description as string) || "",
       tags: (video.tags as string[]) || [],
       isShort: Boolean(video.is_short),
+      publishAt: (video.scheduled_publish_at as string | null) ?? null,
     });
 
-    await updateVideoStatus(videoId, "published", {
+    const scheduledAt = (video.scheduled_publish_at as string | null) ?? null;
+    const isScheduled = Boolean(scheduledAt && new Date(scheduledAt).getTime() > Date.now() + 30_000);
+
+    await updateVideoStatus(videoId, isScheduled ? "scheduled" : "published", {
       youtube_video_id: youtubeVideoId,
-      published_at: new Date().toISOString(),
+      ...(isScheduled ? {} : { published_at: new Date().toISOString() }),
     });
 
-    console.log("Video published successfully:", youtubeVideoId);
+    console.log(isScheduled ? "Video uploaded and scheduled:" : "Video published successfully:", youtubeVideoId);
   } catch (err) {
     console.error("YouTube upload failed:", err);
     await updateVideoStatus(videoId, "failed", { error_message: `YouTube upload failed: ${(err as Error).message}` });

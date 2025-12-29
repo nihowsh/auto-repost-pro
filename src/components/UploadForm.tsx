@@ -108,9 +108,25 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
     }
   };
 
+  const fetchMetadata = async (url: string, sourceType: 'youtube' | 'instagram') => {
+    if (!session?.access_token) {
+      throw new Error('Please sign in again');
+    }
+
+    const { data, error } = await supabase.functions.invoke('fetch-video-metadata', {
+      body: { url, source_type: sourceType },
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+
+    if (error) throw error;
+    return data;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!user || !channel) {
       toast({
         title: 'Not ready',
@@ -145,6 +161,13 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
         throw new Error('Please sign in again');
       }
 
+      // Ensure we always have metadata saved, even if user didn't click Fetch
+      const resolvedMetadata = metadata?.source_url === videoUrl ? metadata : await fetchMetadata(videoUrl, sourceType);
+      setMetadata(resolvedMetadata);
+      setTitle((prev) => prev || resolvedMetadata.title || '');
+      setDescription((prev) => prev || resolvedMetadata.description || '');
+      setTags((prev) => prev || resolvedMetadata.tags?.join(', ') || '');
+
       let manualScheduleTime = null;
       if (useManualSchedule && manualDate && manualTime) {
         manualScheduleTime = new Date(`${manualDate}T${manualTime}`).toISOString();
@@ -154,13 +177,13 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
         body: {
           source_url: videoUrl,
           source_type: sourceType,
-          title: title || metadata?.title || 'Untitled',
-          description: description || metadata?.description || '',
-          tags: tags.split(',').map(t => t.trim()).filter(Boolean),
-          thumbnail_url: metadata?.thumbnail_url,
+          title: title || resolvedMetadata?.title || 'Untitled',
+          description: description || resolvedMetadata?.description || '',
+          tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+          thumbnail_url: resolvedMetadata?.thumbnail_url,
           channel_id: channel.id,
           manual_schedule_time: manualScheduleTime,
-          duration_seconds: metadata?.duration_seconds || null,
+          duration_seconds: resolvedMetadata?.duration_seconds || null,
         },
         headers: {
           Authorization: `Bearer ${session.access_token}`,
