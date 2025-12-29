@@ -118,7 +118,8 @@ serve(async (req) => {
     throw new Error('Invalid action');
   } catch (error) {
     console.error('YouTube auth error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
