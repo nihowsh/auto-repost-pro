@@ -112,10 +112,9 @@ serve(async (req) => {
 
     console.log('Video created:', video.id, 'Scheduled for:', scheduledPublishAt || 'immediate');
 
-    // If immediate (no schedule), trigger the video-worker now
-    if (!scheduledPublishAt) {
-      await triggerVideoWorker(video.id);
-    }
+    // Trigger the worker now.
+    // If this video has a scheduled_publish_at, the worker will upload to YouTube with publishAt.
+    await triggerVideoWorker(video.id);
     
     return new Response(JSON.stringify({ 
       success: true, 
