@@ -68,10 +68,22 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
       return;
     }
 
+    if (!session?.access_token) {
+      toast({
+        title: 'Please sign in again',
+        description: 'Your session expired. Sign out and sign back in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('fetch-video-metadata', {
         body: { url: videoUrl, source_type: sourceType },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
       });
 
       if (error) throw error;
@@ -80,7 +92,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
       setTitle(data.title || '');
       setDescription(data.description || '');
       setTags(data.tags?.join(', ') || '');
-      
+
       toast({
         title: 'Metadata fetched',
         description: `${sourceType === 'youtube' ? 'YouTube' : 'Instagram'} video detected`,
