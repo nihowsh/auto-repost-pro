@@ -3,16 +3,25 @@ import { Button } from '@/components/ui/button';
 import { Youtube, ExternalLink, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 
 export function ConnectChannelCard() {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const { session } = useAuth();
 
   const handleConnectYouTube = async () => {
     setLoading(true);
     try {
+      if (!session?.access_token) {
+        throw new Error('Please sign in again, then retry connecting your channel.');
+      }
+
       const { data, error } = await supabase.functions.invoke('youtube-auth', {
         body: { action: 'get_auth_url' },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
       });
 
       if (error) {
