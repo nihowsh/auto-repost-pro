@@ -35,7 +35,7 @@ serve(async (req) => {
     }
 
     const body = await req.json();
-    const { source_url, source_type, title, description, tags, thumbnail_url, channel_id, manual_schedule_time, video_id, retry } = body;
+    const { source_url, source_type, title, description, tags, thumbnail_url, channel_id, manual_schedule_time, video_id, retry, duration_seconds } = body;
 
     // Handle retry
     if (retry && video_id) {
@@ -46,6 +46,10 @@ serve(async (req) => {
         .eq('user_id', user.id);
       
       if (error) throw error;
+
+      // Immediately trigger video-worker
+      await triggerVideoWorker(video_id);
+
       console.log('Video queued for retry:', video_id);
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -79,7 +83,7 @@ serve(async (req) => {
     // Detect if it's a YouTube Short
     const isShort = source_url.includes('/shorts/') || 
                     source_type === 'instagram' ||
-                    (body.duration_seconds && body.duration_seconds <= 60);
+                    (duration_seconds && duration_seconds <= 60);
 
     // Create video record
     const { data: video, error: insertError } = await supabase
@@ -94,7 +98,8 @@ serve(async (req) => {
         tags: tags || [],
         thumbnail_url,
         is_short: isShort,
-        status: 'pending',
+        duration_seconds: duration_seconds || null,
+        status: scheduledPublishAt ? 'scheduled' : 'pending',
         scheduled_publish_at: scheduledPublishAt,
       })
       .select()
@@ -106,6 +111,11 @@ serve(async (req) => {
     }
 
     console.log('Video created:', video.id, 'Scheduled for:', scheduledPublishAt || 'immediate');
+
+    // If immediate (no schedule), trigger the video-worker now
+    if (!scheduledPublishAt) {
+      await triggerVideoWorker(video.id);
+    }
     
     return new Response(JSON.stringify({ 
       success: true, 
@@ -123,3 +133,24 @@ serve(async (req) => {
     });
   }
 });
+
+async function triggerVideoWorker(videoId: string) {
+  const url = `${SUPABASE_URL}/functions/v1/video-worker`;
+  console.log('Triggering video-worker for:', videoId);
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({ video_id: videoId }),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    console.error('Failed to trigger video-worker:', resp.status, txt);
+  } else {
+    console.log('video-worker triggered successfully');
+  }
+}
