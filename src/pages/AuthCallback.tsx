@@ -7,7 +7,7 @@ import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('Connecting your YouTube channel...');
 
@@ -30,7 +30,7 @@ export default function AuthCallback() {
         return;
       }
 
-      if (!user) {
+      if (!user || !session?.access_token) {
         setMessage('Waiting for authentication...');
         return;
       }
@@ -38,6 +38,9 @@ export default function AuthCallback() {
       try {
         const { data, error } = await supabase.functions.invoke('youtube-auth', {
           body: { action: 'exchange_code', code },
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
         });
 
         if (error) throw error;
@@ -54,7 +57,7 @@ export default function AuthCallback() {
     };
 
     handleCallback();
-  }, [searchParams, navigate, user]);
+  }, [searchParams, navigate, user, session]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
