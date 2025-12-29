@@ -15,7 +15,10 @@ export function ConnectChannelCard() {
         body: { action: 'get_auth_url' },
       });
 
-      if (error) throw error;
+      if (error) {
+        const details = (error as any)?.context?.body || (error as any)?.details;
+        throw new Error(details ? `${error.message}: ${details}` : error.message);
+      }
 
       if (data?.url) {
         window.location.href = data.url;
@@ -23,7 +26,7 @@ export function ConnectChannelCard() {
     } catch (err: any) {
       toast({
         title: 'Connection failed',
-        description: err.message || 'Failed to initiate YouTube connection',
+        description: err?.message || 'Failed to initiate YouTube connection',
         variant: 'destructive',
       });
     } finally {
