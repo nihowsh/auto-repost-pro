@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
 
-interface YouTubeChannel {
+export interface YouTubeChannel {
   id: string;
   channel_id: string;
   channel_title: string;
@@ -12,12 +12,14 @@ interface YouTubeChannel {
 
 export function useYouTubeChannel() {
   const { user } = useAuth();
-  const [channel, setChannel] = useState<YouTubeChannel | null>(null);
+  const [channels, setChannels] = useState<YouTubeChannel[]>([]);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchChannel = useCallback(async () => {
+  const fetchChannels = useCallback(async () => {
     if (!user) {
-      setChannel(null);
+      setChannels([]);
+      setSelectedChannelId(null);
       setLoading(false);
       return;
     }
@@ -28,40 +30,67 @@ export function useYouTubeChannel() {
         .select('*')
         .eq('user_id', user.id)
         .eq('is_active', true)
-        .single();
+        .order('created_at', { ascending: true });
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching channel:', error);
+      if (error) {
+        console.error('Error fetching channels:', error);
+        return;
       }
       
-      setChannel(data);
+      setChannels(data || []);
+      
+      // Auto-select first channel if none selected
+      if (data && data.length > 0 && !selectedChannelId) {
+        setSelectedChannelId(data[0].id);
+      }
     } catch (err) {
       console.error('Error:', err);
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, selectedChannelId]);
 
   useEffect(() => {
-    fetchChannel();
-  }, [fetchChannel]);
+    fetchChannels();
+  }, [fetchChannels]);
 
-  const disconnectChannel = async () => {
-    if (!channel) return;
+  const selectChannel = (channelId: string) => {
+    setSelectedChannelId(channelId);
+  };
 
+  const disconnectChannel = async (channelId: string) => {
     try {
       const { error } = await supabase
         .from('youtube_channels')
         .delete()
-        .eq('id', channel.id);
+        .eq('id', channelId);
 
       if (error) throw error;
-      setChannel(null);
+      
+      // Remove from local state
+      setChannels(prev => prev.filter(c => c.id !== channelId));
+      
+      // If we deleted the selected channel, select another
+      if (selectedChannelId === channelId) {
+        const remaining = channels.filter(c => c.id !== channelId);
+        setSelectedChannelId(remaining.length > 0 ? remaining[0].id : null);
+      }
     } catch (err) {
       console.error('Error disconnecting channel:', err);
       throw err;
     }
   };
 
-  return { channel, loading, refetchChannel: fetchChannel, disconnectChannel };
+  // Computed: currently selected channel
+  const channel = channels.find(c => c.id === selectedChannelId) || null;
+
+  return { 
+    channel, 
+    channels, 
+    loading, 
+    selectChannel,
+    selectedChannelId,
+    refetchChannel: fetchChannels, 
+    disconnectChannel 
+  };
 }

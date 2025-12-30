@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
-import { Youtube, LogOut, Settings, User, RefreshCw, Loader2 } from 'lucide-react';
+import { Youtube, LogOut, Settings, User, Plus, Loader2 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,25 +16,19 @@ import { useToast } from '@/hooks/use-toast';
 
 export function Header() {
   const { user, session, signOut } = useAuth();
-  const { channel, disconnectChannel, refetchChannel } = useYouTubeChannel();
+  const { channel, channels, refetchChannel } = useYouTubeChannel();
   const { toast } = useToast();
-  const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [addingChannel, setAddingChannel] = useState(false);
 
-  const handleSwitchAccount = async () => {
-    setSwitchingAccount(true);
+  const handleAddChannel = async () => {
+    setAddingChannel(true);
     try {
-      // First disconnect current channel if exists
-      if (channel) {
-        await disconnectChannel();
-      }
-
-      // Initiate new Google OAuth with prompt to select account
       if (!session?.access_token) {
         throw new Error('Please sign in again');
       }
 
       const { data, error } = await supabase.functions.invoke('youtube-auth', {
-        body: { action: 'get_auth_url' },
+        body: { action: 'get_auth_url', prompt_type: 'select_account' },
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
@@ -43,17 +37,15 @@ export function Header() {
       if (error) throw error;
 
       if (data?.url) {
-        // Add prompt=select_account to force account selection
-        const urlWithPrompt = data.url + '&prompt=select_account';
-        window.location.href = urlWithPrompt;
+        window.location.href = data.url;
       }
     } catch (err: any) {
       toast({
-        title: 'Switch failed',
-        description: err?.message || 'Failed to switch account',
+        title: 'Failed to add channel',
+        description: err?.message || 'Could not start channel connection',
         variant: 'destructive',
       });
-      setSwitchingAccount(false);
+      setAddingChannel(false);
     }
   };
 
@@ -92,23 +84,23 @@ export function Header() {
             </div>
             <DropdownMenuSeparator className="bg-border" />
             
-            {channel && (
+            {channels.length > 0 && (
               <>
                 <div className="px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Connected Channel</p>
-                  <p className="text-sm font-medium text-foreground truncate">{channel.channel_title}</p>
+                  <p className="text-xs text-muted-foreground">Connected Channels</p>
+                  <p className="text-sm font-medium text-foreground">{channels.length} channel{channels.length !== 1 ? 's' : ''}</p>
                 </div>
                 <DropdownMenuItem 
-                  onClick={handleSwitchAccount}
+                  onClick={handleAddChannel}
                   className="gap-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                  disabled={switchingAccount}
+                  disabled={addingChannel}
                 >
-                  {switchingAccount ? (
+                  {addingChannel ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <RefreshCw className="w-4 h-4" />
+                    <Plus className="w-4 h-4" />
                   )}
-                  Switch Channel
+                  Add Another Channel
                 </DropdownMenuItem>
                 <DropdownMenuSeparator className="bg-border" />
               </>
