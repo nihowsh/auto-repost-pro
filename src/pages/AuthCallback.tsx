@@ -7,16 +7,24 @@ import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user, session } = useAuth();
+  const { user, session, loading: authLoading } = useAuth();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('Connecting your YouTube channel...');
+  const [processed, setProcessed] = useState(false);
 
   useEffect(() => {
     const handleCallback = async () => {
+      // Wait for auth to finish loading
+      if (authLoading) return;
+      
+      // Prevent double-processing
+      if (processed) return;
+
       const code = searchParams.get('code');
       const error = searchParams.get('error');
 
       if (error) {
+        setProcessed(true);
         setStatus('error');
         setMessage('Authorization was denied. Please try again.');
         setTimeout(() => navigate('/'), 3000);
@@ -24,6 +32,7 @@ export default function AuthCallback() {
       }
 
       if (!code) {
+        setProcessed(true);
         setStatus('error');
         setMessage('No authorization code received.');
         setTimeout(() => navigate('/'), 3000);
@@ -31,10 +40,15 @@ export default function AuthCallback() {
       }
 
       if (!user || !session?.access_token) {
-        setMessage('Waiting for authentication...');
+        setProcessed(true);
+        setStatus('error');
+        setMessage('Please sign in first, then try connecting again.');
+        setTimeout(() => navigate('/'), 3000);
         return;
       }
 
+      setProcessed(true);
+      
       try {
         const { data, error } = await supabase.functions.invoke('youtube-auth', {
           body: { action: 'exchange_code', code },
@@ -57,7 +71,7 @@ export default function AuthCallback() {
     };
 
     handleCallback();
-  }, [searchParams, navigate, user, session]);
+  }, [searchParams, navigate, user, session, authLoading, processed]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
