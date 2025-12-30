@@ -3,6 +3,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useVideos } from '@/hooks/useVideos';
 import { VideoCard } from './VideoCard';
 import { UploadForm } from './UploadForm';
+import { BatchUploadForm } from './BatchUploadForm';
+import { ChannelScraperForm } from './ChannelScraperForm';
 import { 
   Upload, 
   Clock, 
@@ -10,11 +12,14 @@ import {
   AlertCircle,
   ListVideo,
   Loader2,
+  ListPlus,
+  Users,
 } from 'lucide-react';
 
 export function Dashboard() {
   const { queueVideos, scheduledVideos, publishedVideos, failedVideos, loading, refetchVideos } = useVideos();
   const [activeTab, setActiveTab] = useState('upload');
+  const [uploadMode, setUploadMode] = useState<'single' | 'batch' | 'scraper'>('single');
 
   const tabs = [
     { id: 'upload', label: 'Upload', icon: Upload, count: null },
@@ -22,6 +27,12 @@ export function Dashboard() {
     { id: 'scheduled', label: 'Scheduled', icon: Clock, count: scheduledVideos.length },
     { id: 'published', label: 'Published', icon: CheckCircle, count: publishedVideos.length },
     { id: 'failed', label: 'Failed', icon: AlertCircle, count: failedVideos.length },
+  ];
+
+  const uploadModes = [
+    { id: 'single', label: 'Single Video', icon: Upload },
+    { id: 'batch', label: 'Batch URLs', icon: ListPlus },
+    { id: 'scraper', label: 'From Channel', icon: Users },
   ];
 
   return (
@@ -45,11 +56,44 @@ export function Dashboard() {
           ))}
         </TabsList>
 
-        <TabsContent value="upload" className="animate-fade-in">
-          <UploadForm onSuccess={() => {
-            refetchVideos();
-            setActiveTab('queue');
-          }} />
+        <TabsContent value="upload" className="animate-fade-in space-y-6">
+          {/* Upload Mode Selector */}
+          <div className="flex gap-2 p-1 bg-card border border-border rounded-lg w-fit">
+            {uploadModes.map((mode) => (
+              <button
+                key={mode.id}
+                onClick={() => setUploadMode(mode.id as 'single' | 'batch' | 'scraper')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  uploadMode === mode.id
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                }`}
+              >
+                <mode.icon className="w-4 h-4" />
+                {mode.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Upload Forms */}
+          {uploadMode === 'single' && (
+            <UploadForm onSuccess={() => {
+              refetchVideos();
+              setActiveTab('queue');
+            }} />
+          )}
+          {uploadMode === 'batch' && (
+            <BatchUploadForm onSuccess={() => {
+              refetchVideos();
+              setActiveTab('queue');
+            }} />
+          )}
+          {uploadMode === 'scraper' && (
+            <ChannelScraperForm onSuccess={() => {
+              refetchVideos();
+              setActiveTab('queue');
+            }} />
+          )}
         </TabsContent>
 
         <TabsContent value="queue" className="animate-fade-in">
