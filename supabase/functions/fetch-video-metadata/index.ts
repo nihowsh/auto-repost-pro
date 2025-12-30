@@ -84,8 +84,8 @@ serve(async (req) => {
       });
     }
 
-    const { url, source_type } = await req.json();
-    console.log("Fetching metadata for:", url, source_type, "user:", user.id);
+    const { url, source_type, channel_id } = await req.json();
+    console.log("Fetching metadata for:", url, source_type, "user:", user.id, "channel_id:", channel_id);
 
     const metadata: any = {
       source_type,
@@ -103,16 +103,24 @@ serve(async (req) => {
       if (!videoId) throw new Error("Could not extract YouTube video id");
 
       // Use the connected channel token to call YouTube Data API
-      const { data: channel, error: channelError } = await supabase
+      // If channel_id is provided, use that specific channel, otherwise find any active channel
+      let channelQuery = supabase
         .from("youtube_channels")
         .select("id, access_token, refresh_token, token_expires_at")
         .eq("user_id", user.id)
-        .eq("is_active", true)
-        .single();
+        .eq("is_active", true);
 
-      if (channelError || !channel) {
+      if (channel_id) {
+        channelQuery = channelQuery.eq("id", channel_id);
+      }
+
+      const { data: channels, error: channelError } = await channelQuery.limit(1);
+
+      if (channelError || !channels || channels.length === 0) {
         throw new Error("No active YouTube channel connected");
       }
+
+      const channel = channels[0];
 
       let accessToken = channel.access_token as string;
       const expiresAt = new Date(channel.token_expires_at as string).getTime();

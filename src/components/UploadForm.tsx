@@ -82,7 +82,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('fetch-video-metadata', {
-        body: { url: videoUrl, source_type: sourceType },
+        body: { url: videoUrl, source_type: sourceType, channel_id: selectedChannelId },
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
@@ -116,7 +116,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
     }
 
     const { data, error } = await supabase.functions.invoke('fetch-video-metadata', {
-      body: { url, source_type: sourceType },
+      body: { url, source_type: sourceType, channel_id: selectedChannelId },
       headers: {
         Authorization: `Bearer ${session.access_token}`,
       },
