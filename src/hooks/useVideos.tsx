@@ -82,7 +82,7 @@ export function useVideos() {
     return videos.filter(v => statuses.includes(v.status));
   }, [videos]);
 
-  const queueVideos = getVideosByStatus(['pending', 'downloading', 'processing', 'ready', 'uploading']);
+  const queueVideos = getVideosByStatus(['pending', 'pending_download', 'downloading', 'processing', 'ready', 'uploading']);
   const scheduledVideos = getVideosByStatus(['scheduled']);
   const publishedVideos = getVideosByStatus(['published']);
   const failedVideos = getVideosByStatus(['failed']);
