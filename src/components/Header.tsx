@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
-import { Youtube, LogOut, Settings, User } from 'lucide-react';
+import { Youtube, LogOut, Settings, User, RefreshCw, Loader2 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,10 +11,51 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 export function Header() {
-  const { user, signOut } = useAuth();
-  const { channel } = useYouTubeChannel();
+  const { user, session, signOut } = useAuth();
+  const { channel, disconnectChannel, refetchChannel } = useYouTubeChannel();
+  const { toast } = useToast();
+  const [switchingAccount, setSwitchingAccount] = useState(false);
+
+  const handleSwitchAccount = async () => {
+    setSwitchingAccount(true);
+    try {
+      // First disconnect current channel if exists
+      if (channel) {
+        await disconnectChannel();
+      }
+
+      // Initiate new Google OAuth with prompt to select account
+      if (!session?.access_token) {
+        throw new Error('Please sign in again');
+      }
+
+      const { data, error } = await supabase.functions.invoke('youtube-auth', {
+        body: { action: 'get_auth_url' },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.url) {
+        // Add prompt=select_account to force account selection
+        const urlWithPrompt = data.url + '&prompt=select_account';
+        window.location.href = urlWithPrompt;
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Switch failed',
+        description: err?.message || 'Failed to switch account',
+        variant: 'destructive',
+      });
+      setSwitchingAccount(false);
+    }
+  };
 
   return (
     <header className="h-16 border-b border-border bg-card/50 backdrop-blur-xl sticky top-0 z-50">
@@ -49,6 +91,29 @@ export function Header() {
               <p className="text-xs text-muted-foreground">Signed in</p>
             </div>
             <DropdownMenuSeparator className="bg-border" />
+            
+            {channel && (
+              <>
+                <div className="px-3 py-2">
+                  <p className="text-xs text-muted-foreground">Connected Channel</p>
+                  <p className="text-sm font-medium text-foreground truncate">{channel.channel_title}</p>
+                </div>
+                <DropdownMenuItem 
+                  onClick={handleSwitchAccount}
+                  className="gap-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  disabled={switchingAccount}
+                >
+                  {switchingAccount ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  Switch Channel
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-border" />
+              </>
+            )}
+
             <DropdownMenuItem className="gap-2 text-muted-foreground hover:text-foreground cursor-pointer">
               <User className="w-4 h-4" />
               Profile
