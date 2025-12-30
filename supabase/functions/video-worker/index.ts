@@ -163,15 +163,20 @@ async function processVideo(videoId: string) {
     return;
   }
 
-  const { data: channel, error: chErr } = await supabase
-    .from("youtube_channels")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .single();
+  // Get channel - use channel_id from video if available, otherwise fallback to user's active channel
+  const channelId = video.channel_id as string | null;
+  let channelQuery = supabase.from("youtube_channels").select("*");
+  
+  if (channelId) {
+    channelQuery = channelQuery.eq("id", channelId);
+  } else {
+    channelQuery = channelQuery.eq("user_id", userId).eq("is_active", true);
+  }
+  
+  const { data: channel, error: chErr } = await channelQuery.single();
 
   if (chErr || !channel) {
-    console.error("No active channel for user", chErr);
+    console.error("No channel found for video", chErr);
     await updateVideoStatus(videoId, "failed", { error_message: "No connected YouTube channel" });
     return;
   }

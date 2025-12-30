@@ -13,6 +13,7 @@ import {
 import { format } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 import { useState } from 'react';
 
 interface VideoCardProps {
@@ -21,6 +22,7 @@ interface VideoCardProps {
 
 const statusConfig: Record<string, { label: string; icon: any; class: string }> = {
   pending: { label: 'Pending', icon: Clock, class: 'status-pending' },
+  pending_download: { label: 'Waiting for Desktop App', icon: Clock, class: 'status-pending' },
   downloading: { label: 'Downloading', icon: Loader2, class: 'status-downloading' },
   processing: { label: 'Processing', icon: Loader2, class: 'status-processing' },
   ready: { label: 'Ready', icon: CheckCircle, class: 'status-ready' },
@@ -32,13 +34,13 @@ const statusConfig: Record<string, { label: string; icon: any; class: string }> 
 
 export function VideoCard({ video }: VideoCardProps) {
   const { toast } = useToast();
+  const { session } = useAuth();
   const [deleting, setDeleting] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   const status = statusConfig[video.status] || statusConfig.pending;
   const StatusIcon = status.icon;
   const isProcessing = ['downloading', 'processing', 'uploading'].includes(video.status);
-
   const handleDelete = async () => {
     setDeleting(true);
     try {
@@ -65,12 +67,24 @@ export function VideoCard({ video }: VideoCardProps) {
   };
 
   const handleRetry = async () => {
+    if (!session?.access_token) {
+      toast({
+        title: 'Session expired',
+        description: 'Please sign in again',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
     setRetrying(true);
     try {
       const { error } = await supabase.functions.invoke('process-video', {
         body: {
           video_id: video.id,
           retry: true,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
         },
       });
 
