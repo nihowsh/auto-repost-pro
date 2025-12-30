@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
+import { ChannelSelector } from '@/components/ChannelSelector';
 import { 
   Link2, 
   Loader2, 
@@ -17,6 +18,7 @@ import {
   Clock,
   Calendar,
   Zap,
+  Youtube,
 } from 'lucide-react';
 
 interface UploadFormProps {
@@ -25,7 +27,7 @@ interface UploadFormProps {
 
 export function UploadForm({ onSuccess }: UploadFormProps) {
   const { user, session } = useAuth();
-  const { channel } = useYouTubeChannel();
+  const { channel, channels, selectedChannelId, selectChannel } = useYouTubeChannel();
   const { toast } = useToast();
   
   const [videoUrl, setVideoUrl] = useState('');
@@ -221,6 +223,22 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Channel Selector */}
+      {channels.length > 0 && (
+        <div className="glass-card p-6">
+          <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+            <Youtube className="w-5 h-5 text-primary" />
+            Publish To
+          </h3>
+          <ChannelSelector
+            channels={channels}
+            selectedChannelId={selectedChannelId}
+            onSelectChannel={selectChannel}
+            disabled={loading}
+          />
+        </div>
+      )}
+
       {/* URL Input */}
       <div className="glass-card p-6">
         <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">

@@ -40,11 +40,15 @@ serve(async (req) => {
     const redirectUri = `${req.headers.get('origin')}/auth/callback`;
 
     if (action === 'get_auth_url') {
+      const { prompt_type } = await req.json().catch(() => ({}));
       const scopes = [
         'https://www.googleapis.com/auth/youtube.upload',
         'https://www.googleapis.com/auth/youtube.readonly',
         'https://www.googleapis.com/auth/youtube',
       ].join(' ');
+
+      // Use select_account to add new channels, consent for re-auth
+      const promptValue = prompt_type === 'select_account' ? 'select_account consent' : 'consent';
 
       const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${GOOGLE_CLIENT_ID}` +
@@ -52,9 +56,9 @@ serve(async (req) => {
         `&response_type=code` +
         `&scope=${encodeURIComponent(scopes)}` +
         `&access_type=offline` +
-        `&prompt=consent`;
+        `&prompt=${encodeURIComponent(promptValue)}`;
 
-      console.log('Generated auth URL for user:', user.id);
+      console.log('Generated auth URL for user:', user.id, 'prompt:', promptValue);
       return new Response(JSON.stringify({ url: authUrl }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -93,7 +97,7 @@ serve(async (req) => {
       const channel = channelData.items[0];
       const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
-      // Save channel to database
+      // Save channel to database (upsert on user_id + channel_id combo)
       const { error: insertError } = await supabase
         .from('youtube_channels')
         .upsert({
@@ -105,7 +109,7 @@ serve(async (req) => {
           refresh_token: tokens.refresh_token,
           token_expires_at: expiresAt.toISOString(),
           is_active: true,
-        }, { onConflict: 'user_id' });
+        }, { onConflict: 'user_id,channel_id' });
 
       if (insertError) {
         console.error('Insert error:', insertError);
