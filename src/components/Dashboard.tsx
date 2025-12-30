@@ -5,6 +5,7 @@ import { VideoCard } from './VideoCard';
 import { UploadForm } from './UploadForm';
 import { BatchUploadForm } from './BatchUploadForm';
 import { ChannelScraperForm } from './ChannelScraperForm';
+import { ApiKeyManager } from './ApiKeyManager';
 import { 
   Upload, 
   Clock, 
@@ -14,6 +15,7 @@ import {
   Loader2,
   ListPlus,
   Users,
+  Terminal,
 } from 'lucide-react';
 
 export function Dashboard() {
@@ -27,6 +29,7 @@ export function Dashboard() {
     { id: 'scheduled', label: 'Scheduled', icon: Clock, count: scheduledVideos.length },
     { id: 'published', label: 'Published', icon: CheckCircle, count: publishedVideos.length },
     { id: 'failed', label: 'Failed', icon: AlertCircle, count: failedVideos.length },
+    { id: 'runner', label: 'Runner', icon: Terminal, count: null },
   ];
 
   const uploadModes = [
@@ -38,7 +41,7 @@ export function Dashboard() {
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5 bg-card border border-border rounded-xl p-1 h-auto">
+        <TabsList className="grid w-full grid-cols-6 bg-card border border-border rounded-xl p-1 h-auto">
           {tabs.map((tab) => (
             <TabsTrigger
               key={tab.id}
@@ -130,6 +133,10 @@ export function Dashboard() {
             emptyMessage="No failed uploads"
             emptyDescription="Failed uploads will appear here for retry"
           />
+        </TabsContent>
+
+        <TabsContent value="runner" className="animate-fade-in">
+          <ApiKeyManager />
         </TabsContent>
       </Tabs>
     </div>

@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.video-worker]
 verify_jwt = false
+
+[functions.runner-auth]
+verify_jwt = false
