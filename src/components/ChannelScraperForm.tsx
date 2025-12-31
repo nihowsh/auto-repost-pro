@@ -5,13 +5,15 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { useToast } from '@/hooks/use-toast';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
+import { useAuth } from '@/hooks/useAuth';
 import { ChannelSelector } from '@/components/ChannelSelector';
+import { supabase } from '@/integrations/supabase/client';
 import { 
   Loader2, 
   Link2,
   Youtube,
   Users,
-  AlertTriangle,
+  Info,
 } from 'lucide-react';
 
 interface ChannelScraperFormProps {
@@ -20,6 +22,7 @@ interface ChannelScraperFormProps {
 
 export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
   const { channel, channels, selectedChannelId, selectChannel } = useYouTubeChannel();
+  const { session } = useAuth();
   const { toast } = useToast();
   
   const [channelUrl, setChannelUrl] = useState('');
@@ -58,18 +61,63 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
       return;
     }
 
+    if (!session?.access_token) {
+      toast({
+        title: 'Session expired',
+        description: 'Please sign in again',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setLoading(true);
 
-    // This feature requires desktop app with yt-dlp for actual implementation
-    // For now, show a placeholder message
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      // Create video rows with pending_download status for the local runner to process
+      const videoPromises = [];
+      for (let i = 0; i < videoCount; i++) {
+        videoPromises.push(
+          supabase.functions.invoke('process-video', {
+            body: {
+              source_url: `${channelUrl}#video-${i + 1}`,
+              source_type: platform,
+              title: `Video ${i + 1} from channel`,
+              description: `Queued from channel scrape - waiting for local runner`,
+              tags: [],
+              thumbnail_url: null,
+              channel_id: channel.id,
+              is_channel_scrape: true,
+              scrape_index: i,
+              scrape_total: videoCount,
+              scrape_channel_url: channelUrl,
+            },
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          })
+        );
+      }
+
+      await Promise.all(videoPromises);
+
       toast({
-        title: 'Desktop App Required',
-        description: 'Channel scraping requires the desktop app with yt-dlp. This feature will work once you wrap this app in Electron/Tauri.',
-        variant: 'default',
+        title: 'Videos queued for download',
+        description: `${videoCount} videos added to queue. Your Local Runner will process them with yt-dlp.`,
       });
-    }, 1500);
+
+      setChannelUrl('');
+      setVideoCount(10);
+      onSuccess?.();
+    } catch (err: any) {
+      console.error('Channel scrape error:', err);
+      toast({
+        title: 'Failed to queue videos',
+        description: err.message || 'Please try again',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const platform = detectPlatform(channelUrl);
@@ -144,22 +192,22 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
         </div>
       </div>
 
-      {/* Desktop App Notice */}
-      <div className="glass-card p-4 bg-warning/10 border-warning/30">
+      {/* Info Box */}
+      <div className="glass-card p-4 bg-primary/5 border-primary/20">
         <div className="flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+          <Info className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-foreground">Desktop App Required</p>
+            <p className="text-sm font-medium text-foreground">Local Runner Required</p>
             <p className="text-sm text-muted-foreground mt-1">
-              Channel scraping requires running yt-dlp locally. This feature will be available 
-              when you wrap this app with Electron or Tauri and integrate yt-dlp.
+              Videos will be queued with <code className="px-1 py-0.5 rounded bg-muted text-xs">pending_download</code> status. 
+              Your Local Runner will use yt-dlp to scrape and download videos from this channel.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Info Box */}
-      <div className="glass-card p-4 bg-primary/5 border-primary/20">
+      {/* Auto-scheduling Info */}
+      <div className="glass-card p-4 bg-muted/50">
         <p className="text-sm text-muted-foreground">
           <strong className="text-foreground">Auto-scheduling:</strong> Fetched videos will be automatically 
           scheduled 4 hours apart, starting immediately if no videos are currently scheduled.
@@ -176,12 +224,12 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
         {loading ? (
           <>
             <Loader2 className="w-5 h-5 animate-spin" />
-            Fetching Videos...
+            Queueing Videos...
           </>
         ) : (
           <>
             <Users className="w-5 h-5" />
-            Fetch {videoCount} Videos from {platform === 'instagram' ? 'Profile' : 'Channel'}
+            Queue {videoCount} Videos for Download
           </>
         )}
       </Button>

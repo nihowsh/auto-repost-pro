@@ -134,6 +134,59 @@ async function uploadToYouTube(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Upload thumbnail to YouTube
+// ───────────────────────────────────────────────────────────────────────────
+
+async function uploadThumbnail(
+  accessToken: string,
+  youtubeVideoId: string,
+  thumbnailUrl: string
+): Promise<boolean> {
+  try {
+    console.log("Fetching thumbnail from:", thumbnailUrl);
+    
+    // Fetch the thumbnail image
+    const imgResp = await fetch(thumbnailUrl);
+    if (!imgResp.ok) {
+      console.warn("Failed to fetch thumbnail:", imgResp.status);
+      return false;
+    }
+    
+    const imgBuffer = await imgResp.arrayBuffer();
+    const contentType = imgResp.headers.get("Content-Type") || "image/jpeg";
+    
+    console.log("Uploading thumbnail to YouTube, size:", imgBuffer.byteLength);
+    
+    // Upload to YouTube
+    const uploadUrl = new URL("https://www.googleapis.com/upload/youtube/v3/thumbnails/set");
+    uploadUrl.searchParams.set("videoId", youtubeVideoId);
+    uploadUrl.searchParams.set("uploadType", "media");
+    
+    const uploadResp = await fetch(uploadUrl.toString(), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": contentType,
+        "Content-Length": String(imgBuffer.byteLength),
+      },
+      body: imgBuffer,
+    });
+    
+    if (!uploadResp.ok) {
+      const txt = await uploadResp.text();
+      console.warn("Thumbnail upload failed:", uploadResp.status, txt);
+      return false;
+    }
+    
+    console.log("Thumbnail uploaded successfully");
+    return true;
+  } catch (err) {
+    console.warn("Thumbnail upload error:", err);
+    return false;
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Main worker logic - expects video to already be in storage (uploaded by desktop app via yt-dlp)
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -230,6 +283,15 @@ async function processVideo(videoId: string) {
       isShort: Boolean(video.is_short),
       publishAt: (video.scheduled_publish_at as string | null) ?? null,
     });
+
+    // Upload thumbnail if available
+    const thumbnailUrl = video.thumbnail_url as string | null;
+    if (thumbnailUrl) {
+      console.log("Uploading thumbnail for video:", youtubeVideoId);
+      await uploadThumbnail(accessToken, youtubeVideoId, thumbnailUrl);
+    } else {
+      console.log("No thumbnail URL available, skipping thumbnail upload");
+    }
 
     const scheduledAt = (video.scheduled_publish_at as string | null) ?? null;
     const isScheduled = Boolean(scheduledAt && new Date(scheduledAt).getTime() > Date.now() + 30_000);
