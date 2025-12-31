@@ -491,6 +491,7 @@ function isChannelOrPlaylistUrl(url) {
     /youtube\\.com\\/c\\//,
     /youtube\\.com\\/user\\//,
     /youtube\\.com\\/playlist\\?list=/,
+    /instagram\\.com\\/[^/]+(\\/reels)?\\/?$/,  // Instagram profiles
   ];
   return channelPatterns.some(pattern => pattern.test(url));
 }
@@ -499,6 +500,13 @@ function isChannelOrPlaylistUrl(url) {
 function isYouTubeShortsFeedUrl(url) {
   return /youtube\\.com\\/@[^/]+\\/shorts/.test(url) || 
          /youtube\\.com\\/channel\\/[^/]+\\/shorts/.test(url);
+}
+
+// Check if URL is an Instagram profile or Reels feed
+function isInstagramProfileUrl(url) {
+  // Matches: instagram.com/username, instagram.com/username/, instagram.com/username/reels
+  return /instagram\\.com\\/[^/]+(\\/reels)?\\/?$/.test(url) ||
+         /instagram\\.com\\/[^/]+\\/reels\\/?/.test(url);
 }
 
 // Parse scrape parameters from source_url (format: url#limit=N#index=M)
@@ -538,6 +546,11 @@ function toYouTubeShortsUrl(videoId) {
   return \`https://youtube.com/shorts/\${videoId}\`;
 }
 
+// Convert shortcode to individual Instagram Reel URL
+function toInstagramReelUrl(shortcode) {
+  return \`https://www.instagram.com/reel/\${shortcode}/\`;
+}
+
 // Cache for extracted + sampled video URLs per channel
 // Key: baseUrl, Value: array of resolved individual video URLs
 const scrapeSelectionCache = new Map();
@@ -573,6 +586,43 @@ async function extractShortsCandidateIds(feedUrl, sampleSize) {
   }
 }
 
+// Extract Reel shortcodes from an Instagram profile (used ONLY for ID extraction, never for download)
+async function extractInstagramReelIds(profileUrl, sampleSize) {
+  // Fetch more candidates than needed for random selection
+  const fetchLimit = Math.min(sampleSize * 3, 100);
+  
+  // Normalize URL to reels tab if not already
+  let reelsUrl = profileUrl;
+  if (!reelsUrl.includes('/reels')) {
+    reelsUrl = reelsUrl.replace(/\\/?$/, '/reels/');
+  }
+  
+  console.log(\`📸 Extracting candidate Reel IDs from Instagram (fetching \${fetchLimit} for sampling \${sampleSize})...\`);
+  
+  try {
+    const args = [
+      '--flat-playlist',
+      '--lazy-playlist',
+      '--print', 'id',
+      '--playlist-end', String(fetchLimit),
+      '--no-warnings',
+      reelsUrl,
+    ];
+    
+    const result = execSync(\`yt-dlp \${args.map(a => \`"\${a}"\`).join(' ')}\`, {
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    
+    const ids = result.trim().split('\\n').filter(id => id && id.length > 0);
+    console.log(\`✅ Extracted \${ids.length} candidate Reel IDs (shortcodes)\`);
+    return ids;
+  } catch (error) {
+    console.error('Failed to extract Instagram Reel IDs:', error.message);
+    throw error;
+  }
+}
+
 // Extract individual video URLs from a regular channel/playlist URL
 async function extractVideoUrls(channelUrl, limit = 10) {
   console.log(\`🔍 Extracting up to \${limit} video URLs from channel...\`);
@@ -601,7 +651,7 @@ async function extractVideoUrls(channelUrl, limit = 10) {
 }
 
 // Resolve the actual video URL for a scrape job
-// This handles caching and random sampling for Shorts feeds
+// This handles caching and random sampling for Shorts/Reels feeds
 async function resolveScrapeVideoUrl(sourceUrl) {
   const { baseUrl, limit, index } = parseScrapeParams(sourceUrl);
   
@@ -610,7 +660,7 @@ async function resolveScrapeVideoUrl(sourceUrl) {
     let selectedUrls;
     
     if (isYouTubeShortsFeedUrl(baseUrl)) {
-      // SHORTS FEED: Extract IDs, randomly sample, convert to individual URLs
+      // YOUTUBE SHORTS FEED: Extract IDs, randomly sample, convert to individual URLs
       console.log('🎬 Detected YouTube Shorts feed - using optimized extraction...');
       const candidateIds = await extractShortsCandidateIds(baseUrl, limit);
       
@@ -624,6 +674,23 @@ async function resolveScrapeVideoUrl(sourceUrl) {
       
       // Convert to individual Shorts URLs (NEVER call yt-dlp with /@channel/shorts for downloading)
       selectedUrls = sampledIds.map(toYouTubeShortsUrl);
+      
+    } else if (isInstagramProfileUrl(baseUrl)) {
+      // INSTAGRAM REELS: Extract shortcodes, randomly sample, convert to individual URLs
+      console.log('📸 Detected Instagram profile - using optimized Reels extraction...');
+      const candidateIds = await extractInstagramReelIds(baseUrl, limit);
+      
+      if (candidateIds.length === 0) {
+        throw new Error('No Reels found on Instagram profile');
+      }
+      
+      // Randomly sample N IDs
+      const sampledIds = pickRandom(candidateIds, Math.min(limit, candidateIds.length));
+      console.log(\`🎲 Randomly selected \${sampledIds.length} Reels from \${candidateIds.length} candidates\`);
+      
+      // Convert to individual Reel URLs (NEVER call yt-dlp with /username/reels for downloading)
+      selectedUrls = sampledIds.map(toInstagramReelUrl);
+      
     } else {
       // REGULAR CHANNEL/PLAYLIST: Extract URLs directly
       selectedUrls = await extractVideoUrls(baseUrl, limit);
