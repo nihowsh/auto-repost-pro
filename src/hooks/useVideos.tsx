@@ -12,7 +12,15 @@ export interface Video {
   thumbnail_url: string | null;
   duration_seconds: number | null;
   is_short: boolean;
-  status: 'pending' | 'downloading' | 'processing' | 'ready' | 'uploading' | 'scheduled' | 'published' | 'failed';
+  status:
+    | 'pending'
+    | 'pending_download'
+    | 'downloading'
+    | 'processing'
+    | 'uploading'
+    | 'scheduled'
+    | 'published'
+    | 'failed';
   youtube_video_id: string | null;
   scheduled_publish_at: string | null;
   published_at: string | null;
@@ -20,6 +28,14 @@ export interface Video {
   created_at: string;
   updated_at: string;
 }
+
+const QUEUE_STATUSES: Video['status'][] = [
+  'pending',
+  'pending_download',
+  'downloading',
+  'processing',
+  'uploading',
+];
 
 export function useVideos() {
   const { user } = useAuth();
@@ -78,11 +94,47 @@ export function useVideos() {
     };
   }, [user, fetchVideos]);
 
-  const getVideosByStatus = useCallback((statuses: string[]) => {
-    return videos.filter(v => statuses.includes(v.status));
-  }, [videos]);
+  const getVideosByStatus = useCallback(
+    (statuses: string[]) => {
+      return videos.filter((v) => statuses.includes(v.status));
+    },
+    [videos]
+  );
 
-  const queueVideos = getVideosByStatus(['pending', 'pending_download', 'downloading', 'processing', 'ready', 'uploading']);
+  const deleteVideo = useCallback(
+    async (videoId: string) => {
+      if (!user) throw new Error('Not signed in');
+
+      const { error, count } = await supabase
+        .from('videos')
+        .delete({ count: 'exact' })
+        .eq('id', videoId)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      if (!count) throw new Error('Video not found or already deleted');
+
+      // Update UI immediately; realtime/refetch will reconcile afterwards.
+      setVideos((prev) => prev.filter((v) => v.id !== videoId));
+    },
+    [user]
+  );
+
+  const deleteQueueVideos = useCallback(async () => {
+    if (!user) throw new Error('Not signed in');
+
+    const { error } = await supabase
+      .from('videos')
+      .delete()
+      .eq('user_id', user.id)
+      .in('status', QUEUE_STATUSES);
+
+    if (error) throw error;
+
+    setVideos((prev) => prev.filter((v) => !QUEUE_STATUSES.includes(v.status)));
+  }, [user]);
+
+  const queueVideos = getVideosByStatus(QUEUE_STATUSES);
   const scheduledVideos = getVideosByStatus(['scheduled']);
   const publishedVideos = getVideosByStatus(['published']);
   const failedVideos = getVideosByStatus(['failed']);
@@ -95,5 +147,8 @@ export function useVideos() {
     scheduledVideos,
     publishedVideos,
     failedVideos,
+    deleteVideo,
+    deleteQueueVideos,
   };
 }
+

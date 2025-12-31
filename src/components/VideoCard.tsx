@@ -1,8 +1,8 @@
 import { Video } from '@/hooks/useVideos';
 import { Button } from '@/components/ui/button';
-import { 
-  Clock, 
-  CheckCircle, 
+import {
+  Clock,
+  CheckCircle,
   AlertCircle,
   ExternalLink,
   Trash2,
@@ -18,11 +18,12 @@ import { useState } from 'react';
 
 interface VideoCardProps {
   video: Video;
+  onDelete?: (videoId: string) => Promise<void>;
 }
 
 const statusConfig: Record<string, { label: string; icon: any; class: string }> = {
   pending: { label: 'Pending', icon: Clock, class: 'status-pending' },
-  pending_download: { label: 'Waiting for Desktop App', icon: Clock, class: 'status-pending' },
+  pending_download: { label: 'Waiting for Local Runner', icon: Clock, class: 'status-pending' },
   downloading: { label: 'Downloading', icon: Loader2, class: 'status-downloading' },
   processing: { label: 'Processing', icon: Loader2, class: 'status-processing' },
   ready: { label: 'Ready', icon: CheckCircle, class: 'status-ready' },
@@ -32,7 +33,7 @@ const statusConfig: Record<string, { label: string; icon: any; class: string }> 
   failed: { label: 'Failed', icon: AlertCircle, class: 'status-failed' },
 };
 
-export function VideoCard({ video }: VideoCardProps) {
+export function VideoCard({ video, onDelete }: VideoCardProps) {
   const { toast } = useToast();
   const { session } = useAuth();
   const [deleting, setDeleting] = useState(false);
@@ -51,20 +52,18 @@ export function VideoCard({ video }: VideoCardProps) {
       return;
     }
 
+    if (!onDelete) {
+      toast({
+        title: 'Delete unavailable',
+        description: 'Please refresh the page and try again',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setDeleting(true);
     try {
-      const { error, count } = await supabase
-        .from('videos')
-        .delete({ count: 'exact' })
-        .eq('id', video.id)
-        .eq('user_id', session.user.id);
-
-      if (error) throw error;
-      
-      if (count === 0) {
-        throw new Error('Video not found or already deleted');
-      }
-
+      await onDelete(video.id);
       toast({
         title: 'Video removed',
         description: 'The video has been removed from your queue',

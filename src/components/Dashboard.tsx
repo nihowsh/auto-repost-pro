@@ -6,22 +6,45 @@ import { UploadForm } from './UploadForm';
 import { BatchUploadForm } from './BatchUploadForm';
 import { ChannelScraperForm } from './ChannelScraperForm';
 import { ApiKeyManager } from './ApiKeyManager';
-import { 
-  Upload, 
-  Clock, 
-  CheckCircle, 
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Upload,
+  Clock,
+  CheckCircle,
   AlertCircle,
   ListVideo,
   Loader2,
   ListPlus,
   Users,
   Terminal,
+  Trash2,
 } from 'lucide-react';
 
 export function Dashboard() {
-  const { queueVideos, scheduledVideos, publishedVideos, failedVideos, loading, refetchVideos } = useVideos();
+  const {
+    queueVideos,
+    scheduledVideos,
+    publishedVideos,
+    failedVideos,
+    loading,
+    refetchVideos,
+    deleteVideo,
+    deleteQueueVideos,
+  } = useVideos();
   const [activeTab, setActiveTab] = useState('upload');
   const [uploadMode, setUploadMode] = useState<'single' | 'batch' | 'scraper'>('single');
+  const [confirmClearQueueOpen, setConfirmClearQueueOpen] = useState(false);
+  const [clearingQueue, setClearingQueue] = useState(false);
 
   const tabs = [
     { id: 'upload', label: 'Upload', icon: Upload, count: null },
@@ -37,6 +60,16 @@ export function Dashboard() {
     { id: 'batch', label: 'Batch URLs', icon: ListPlus },
     { id: 'scraper', label: 'From Channel', icon: Users },
   ];
+
+  const handleClearQueue = async () => {
+    setClearingQueue(true);
+    try {
+      await deleteQueueVideos();
+      setConfirmClearQueueOpen(false);
+    } finally {
+      setClearingQueue(false);
+    }
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -80,58 +113,97 @@ export function Dashboard() {
 
           {/* Upload Forms */}
           {uploadMode === 'single' && (
-            <UploadForm onSuccess={() => {
-              refetchVideos();
-              setActiveTab('queue');
-            }} />
+            <UploadForm
+              onSuccess={() => {
+                refetchVideos();
+                setActiveTab('queue');
+              }}
+            />
           )}
           {uploadMode === 'batch' && (
-            <BatchUploadForm onSuccess={() => {
-              refetchVideos();
-              setActiveTab('queue');
-            }} />
+            <BatchUploadForm
+              onSuccess={() => {
+                refetchVideos();
+                setActiveTab('queue');
+              }}
+            />
           )}
           {uploadMode === 'scraper' && (
-            <ChannelScraperForm onSuccess={() => {
-              refetchVideos();
-              setActiveTab('queue');
-            }} />
+            <ChannelScraperForm
+              onSuccess={() => {
+                refetchVideos();
+                setActiveTab('queue');
+              }}
+            />
           )}
         </TabsContent>
 
-        <TabsContent value="queue" className="animate-fade-in">
-          <VideoList 
-            videos={queueVideos} 
-            loading={loading} 
+        <TabsContent value="queue" className="animate-fade-in space-y-4">
+          <div className="flex items-center justify-end">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => setConfirmClearQueueOpen(true)}
+              disabled={queueVideos.length === 0 || clearingQueue}
+            >
+              <Trash2 className="w-4 h-4" />
+              Remove all
+            </Button>
+          </div>
+
+          <VideoList
+            videos={queueVideos}
+            loading={loading}
             emptyMessage="No videos in queue"
             emptyDescription="Upload a video to get started"
+            onDelete={deleteVideo}
           />
+
+          <AlertDialog open={confirmClearQueueOpen} onOpenChange={setConfirmClearQueueOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Remove all queued videos?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will remove all videos currently in your queue (pending, waiting for local runner, downloading, processing, uploading).
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={clearingQueue}>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleClearQueue} disabled={clearingQueue}>
+                  {clearingQueue ? 'Removing...' : 'Remove all'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </TabsContent>
 
         <TabsContent value="scheduled" className="animate-fade-in">
-          <VideoList 
-            videos={scheduledVideos} 
-            loading={loading} 
+          <VideoList
+            videos={scheduledVideos}
+            loading={loading}
             emptyMessage="No scheduled videos"
             emptyDescription="Videos will appear here after processing"
+            onDelete={deleteVideo}
           />
         </TabsContent>
 
         <TabsContent value="published" className="animate-fade-in">
-          <VideoList 
-            videos={publishedVideos} 
-            loading={loading} 
+          <VideoList
+            videos={publishedVideos}
+            loading={loading}
             emptyMessage="No published videos"
             emptyDescription="Your published videos will appear here"
+            onDelete={deleteVideo}
           />
         </TabsContent>
 
         <TabsContent value="failed" className="animate-fade-in">
-          <VideoList 
-            videos={failedVideos} 
-            loading={loading} 
+          <VideoList
+            videos={failedVideos}
+            loading={loading}
             emptyMessage="No failed uploads"
             emptyDescription="Failed uploads will appear here for retry"
+            onDelete={deleteVideo}
           />
         </TabsContent>
 
@@ -148,9 +220,10 @@ interface VideoListProps {
   loading: boolean;
   emptyMessage: string;
   emptyDescription: string;
+  onDelete?: (videoId: string) => Promise<void>;
 }
 
-function VideoList({ videos, loading, emptyMessage, emptyDescription }: VideoListProps) {
+function VideoList({ videos, loading, emptyMessage, emptyDescription, onDelete }: VideoListProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -174,7 +247,7 @@ function VideoList({ videos, loading, emptyMessage, emptyDescription }: VideoLis
   return (
     <div className="grid gap-4">
       {videos.map((video) => (
-        <VideoCard key={video.id} video={video} />
+        <VideoCard key={video.id} video={video} onDelete={onDelete} />
       ))}
     </div>
   );
