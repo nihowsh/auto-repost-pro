@@ -490,18 +490,94 @@ function isChannelOrPlaylistUrl(url) {
     /youtube\\.com\\/channel\\//,
     /youtube\\.com\\/c\\//,
     /youtube\\.com\\/user\\//,
-    /youtube\\.com\\/@[^/]+\\/shorts/,
     /youtube\\.com\\/playlist\\?list=/,
   ];
   return channelPatterns.some(pattern => pattern.test(url));
 }
 
-// Extract individual video URLs from a channel/playlist URL
+// Check if URL is specifically a YouTube Shorts feed
+function isYouTubeShortsFeedUrl(url) {
+  return /youtube\\.com\\/@[^/]+\\/shorts/.test(url) || 
+         /youtube\\.com\\/channel\\/[^/]+\\/shorts/.test(url);
+}
+
+// Parse scrape parameters from source_url (format: url#limit=N#index=M)
+function parseScrapeParams(sourceUrl) {
+  let baseUrl = sourceUrl;
+  let limit = 10;
+  let index = 0;
+  
+  const limitMatch = sourceUrl.match(/#limit=(\\d+)/);
+  if (limitMatch) {
+    limit = parseInt(limitMatch[1], 10);
+  }
+  
+  const indexMatch = sourceUrl.match(/#index=(\\d+)/);
+  if (indexMatch) {
+    index = parseInt(indexMatch[1], 10);
+  }
+  
+  // Remove all hash parameters
+  baseUrl = sourceUrl.split('#')[0];
+  
+  return { baseUrl, limit, index };
+}
+
+// Fisher-Yates shuffle to randomly pick N items
+function pickRandom(arr, n) {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, n);
+}
+
+// Convert video ID to individual Shorts URL
+function toYouTubeShortsUrl(videoId) {
+  return \`https://youtube.com/shorts/\${videoId}\`;
+}
+
+// Cache for extracted + sampled video URLs per channel
+// Key: baseUrl, Value: array of resolved individual video URLs
+const scrapeSelectionCache = new Map();
+
+// Extract video IDs from a Shorts feed (used ONLY for ID extraction, never for download)
+async function extractShortsCandidateIds(feedUrl, sampleSize) {
+  // Fetch more candidates than needed to have a good pool for random selection
+  const fetchLimit = Math.min(sampleSize * 3, 100);
+  
+  console.log(\`🔍 Extracting candidate video IDs from Shorts feed (fetching \${fetchLimit} for sampling \${sampleSize})...\`);
+  
+  try {
+    const args = [
+      '--flat-playlist',
+      '--lazy-playlist',
+      '--print', 'id',
+      '--playlist-end', String(fetchLimit),
+      '--no-warnings',
+      feedUrl,
+    ];
+    
+    const result = execSync(\`yt-dlp \${args.map(a => \`"\${a}"\`).join(' ')}\`, {
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    
+    const ids = result.trim().split('\\n').filter(id => id && id.length > 0);
+    console.log(\`✅ Extracted \${ids.length} candidate video IDs\`);
+    return ids;
+  } catch (error) {
+    console.error('Failed to extract video IDs:', error.message);
+    throw error;
+  }
+}
+
+// Extract individual video URLs from a regular channel/playlist URL
 async function extractVideoUrls(channelUrl, limit = 10) {
   console.log(\`🔍 Extracting up to \${limit} video URLs from channel...\`);
   
   try {
-    // Use --flat-playlist to get video URLs without downloading
     const args = [
       '--flat-playlist',
       '--print', 'url',
@@ -524,6 +600,52 @@ async function extractVideoUrls(channelUrl, limit = 10) {
   }
 }
 
+// Resolve the actual video URL for a scrape job
+// This handles caching and random sampling for Shorts feeds
+async function resolveScrapeVideoUrl(sourceUrl) {
+  const { baseUrl, limit, index } = parseScrapeParams(sourceUrl);
+  
+  // Check cache first
+  if (!scrapeSelectionCache.has(baseUrl)) {
+    let selectedUrls;
+    
+    if (isYouTubeShortsFeedUrl(baseUrl)) {
+      // SHORTS FEED: Extract IDs, randomly sample, convert to individual URLs
+      console.log('🎬 Detected YouTube Shorts feed - using optimized extraction...');
+      const candidateIds = await extractShortsCandidateIds(baseUrl, limit);
+      
+      if (candidateIds.length === 0) {
+        throw new Error('No videos found in Shorts feed');
+      }
+      
+      // Randomly sample N IDs
+      const sampledIds = pickRandom(candidateIds, Math.min(limit, candidateIds.length));
+      console.log(\`🎲 Randomly selected \${sampledIds.length} videos from \${candidateIds.length} candidates\`);
+      
+      // Convert to individual Shorts URLs (NEVER call yt-dlp with /@channel/shorts for downloading)
+      selectedUrls = sampledIds.map(toYouTubeShortsUrl);
+    } else {
+      // REGULAR CHANNEL/PLAYLIST: Extract URLs directly
+      selectedUrls = await extractVideoUrls(baseUrl, limit);
+    }
+    
+    if (selectedUrls.length === 0) {
+      throw new Error('No videos found in channel/playlist');
+    }
+    
+    scrapeSelectionCache.set(baseUrl, selectedUrls);
+    console.log(\`📦 Cached \${selectedUrls.length} video URLs for this batch\`);
+  }
+  
+  const cachedUrls = scrapeSelectionCache.get(baseUrl);
+  
+  if (index >= cachedUrls.length) {
+    throw new Error(\`Video index \${index} out of range (only \${cachedUrls.length} videos available)\`);
+  }
+  
+  return cachedUrls[index];
+}
+
 async function downloadVideo(video) {
   const outputDir = path.join(process.cwd(), 'downloads');
   if (!fs.existsSync(outputDir)) {
@@ -533,48 +655,17 @@ async function downloadVideo(video) {
   const outputPath = path.join(outputDir, \`\${video.id}.mp4\`);
   let sourceUrl = video.source_url;
   
-  // Check if this is a channel scrape job (source_url contains channel URL pattern)
-  // The scrape_channel_url field or a special marker in source_url indicates this
-  if (isChannelOrPlaylistUrl(sourceUrl)) {
-    // Extract limit from source_url if present (format: url#limit=N)
-    let limit = 10;
-    if (sourceUrl.includes('#limit=')) {
-      const match = sourceUrl.match(/#limit=(\\d+)/);
-      if (match) {
-        limit = parseInt(match[1], 10);
-        sourceUrl = sourceUrl.split('#limit=')[0];
-      }
-    }
-    
-    // Extract individual video URLs first
-    const videoUrls = await extractVideoUrls(sourceUrl, limit);
-    
-    if (videoUrls.length === 0) {
-      throw new Error('No videos found in channel');
-    }
-    
-    // Use the first video URL (for channel scrape, each job handles one video)
-    // The index is encoded in source_url as #index=N
-    let index = 0;
-    if (video.source_url.includes('#index=')) {
-      const match = video.source_url.match(/#index=(\\d+)/);
-      if (match) {
-        index = parseInt(match[1], 10);
-      }
-    }
-    
-    if (index >= videoUrls.length) {
-      throw new Error(\`Video index \${index} out of range (only \${videoUrls.length} videos found)\`);
-    }
-    
-    sourceUrl = videoUrls[index];
-    console.log(\`📹 Using video URL [\${index + 1}/\${videoUrls.length}]: \${sourceUrl}\`);
+  // Check if this is a channel/playlist scrape job
+  if (isChannelOrPlaylistUrl(sourceUrl) || isYouTubeShortsFeedUrl(sourceUrl.split('#')[0])) {
+    // Resolve to individual video URL using cache + random sampling
+    sourceUrl = await resolveScrapeVideoUrl(video.source_url);
+    console.log(\`📹 Resolved to individual video URL: \${sourceUrl}\`);
   }
   
   console.log(\`📥 Downloading: \${video.title || sourceUrl}\`);
   
   try {
-    // Use yt-dlp to download the individual video
+    // Use yt-dlp to download the individual video (NEVER a feed URL)
     const args = [
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
