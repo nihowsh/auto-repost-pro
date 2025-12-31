@@ -42,6 +42,15 @@ export function VideoCard({ video }: VideoCardProps) {
   const StatusIcon = status.icon;
   const isProcessing = ['downloading', 'processing', 'uploading'].includes(video.status);
   const handleDelete = async () => {
+    if (!session) {
+      toast({
+        title: 'Session expired',
+        description: 'Please sign in again',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setDeleting(true);
     try {
       const { error } = await supabase
@@ -56,6 +65,7 @@ export function VideoCard({ video }: VideoCardProps) {
         description: 'The video has been removed from your queue',
       });
     } catch (err: any) {
+      console.error('Delete error:', err);
       toast({
         title: 'Delete failed',
         description: err.message,
