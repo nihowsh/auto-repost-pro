@@ -53,12 +53,17 @@ export function VideoCard({ video }: VideoCardProps) {
 
     setDeleting(true);
     try {
-      const { error } = await supabase
+      const { error, count } = await supabase
         .from('videos')
-        .delete()
-        .eq('id', video.id);
+        .delete({ count: 'exact' })
+        .eq('id', video.id)
+        .eq('user_id', session.user.id);
 
       if (error) throw error;
+      
+      if (count === 0) {
+        throw new Error('Video not found or already deleted');
+      }
 
       toast({
         title: 'Video removed',
