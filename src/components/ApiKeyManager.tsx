@@ -411,7 +411,6 @@ function loadEnv() {
 
 loadEnv();
 
-const RUNNER_VERSION = '2025-12-31-shorts-reels-v3';
 const API_KEY = process.env.RUNNER_API_KEY;
 const POLL_INTERVAL = 30000; // 30 seconds
 const SUPABASE_FUNCTION_URL = 'https://qhzwksaeogpwgvttcxej.supabase.co/functions/v1';
@@ -484,38 +483,30 @@ async function updateVideoStatus(videoId, status, extra = {}) {
   });
 }
 
-// Normalize URL for matching by removing hash params (our scrape metadata uses #limit/#index)
-function normalizeUrlForMatching(url) {
-  return String(url || '').split('#')[0];
-}
-
 // Check if URL is a channel/playlist URL that needs video extraction
 function isChannelOrPlaylistUrl(url) {
-  const u = normalizeUrlForMatching(url);
   const channelPatterns = [
-    /youtube\.com\/@[^/]+/,
-    /youtube\.com\/channel\//,
-    /youtube\.com\/c\//,
-    /youtube\.com\/user\//,
-    /youtube\.com\/playlist\?list=/,
-    /instagram\.com\/[^/]+(\/reels)?\/?$/,  // Instagram profiles
+    /youtube\\.com\\/@[^/]+/,
+    /youtube\\.com\\/channel\\//,
+    /youtube\\.com\\/c\\//,
+    /youtube\\.com\\/user\\//,
+    /youtube\\.com\\/playlist\\?list=/,
+    /instagram\\.com\\/[^/]+(\\/reels)?\\/?$/,  // Instagram profiles
   ];
-  return channelPatterns.some(pattern => pattern.test(u));
+  return channelPatterns.some(pattern => pattern.test(url));
 }
 
-// Check if URL is specifically a YouTube Shorts FEED (not an individual Shorts video)
+// Check if URL is specifically a YouTube Shorts feed
 function isYouTubeShortsFeedUrl(url) {
-  const u = normalizeUrlForMatching(url);
-  return /youtube\.com\/@[^/]+\/shorts(\/?)([?#].*)?$/.test(u) ||
-         /youtube\.com\/channel\/[^/]+\/shorts(\/?)([?#].*)?$/.test(u);
+  return /youtube\\.com\\/@[^/]+\\/shorts/.test(url) || 
+         /youtube\\.com\\/channel\\/[^/]+\\/shorts/.test(url);
 }
 
 // Check if URL is an Instagram profile or Reels feed
 function isInstagramProfileUrl(url) {
-  const u = normalizeUrlForMatching(url);
   // Matches: instagram.com/username, instagram.com/username/, instagram.com/username/reels
-  return /instagram\.com\/[^/]+(\/reels)?\/?$/.test(u) ||
-         /instagram\.com\/[^/]+\/reels\/?/.test(u);
+  return /instagram\\.com\\/[^/]+(\\/reels)?\\/?$/.test(url) ||
+         /instagram\\.com\\/[^/]+\\/reels\\/?/.test(url);
 }
 
 // Parse scrape parameters from source_url (format: url#limit=N#index=M)
@@ -728,26 +719,17 @@ async function downloadVideo(video) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const outputPath = path.join(outputDir, String(video.id) + '.mp4');
-  const originalSourceUrl = video.source_url;
-  let sourceUrl = originalSourceUrl;
-
-  const { baseUrl } = parseScrapeParams(originalSourceUrl);
-  const isScrapeJob = originalSourceUrl.includes('#limit=') || originalSourceUrl.includes('#index=');
-
-  // Resolve to an individual URL for ALL scrape jobs / channel feeds
-  // Shorts/Reels feeds must NEVER be downloaded directly.
-  if (isScrapeJob || isChannelOrPlaylistUrl(baseUrl) || isYouTubeShortsFeedUrl(baseUrl) || isInstagramProfileUrl(baseUrl)) {
-    sourceUrl = await resolveScrapeVideoUrl(originalSourceUrl);
-    console.log('📹 Resolved to individual video URL: ' + sourceUrl);
-
-    // Hard safety: never download a feed/profile URL
-    if (isYouTubeShortsFeedUrl(sourceUrl) || isInstagramProfileUrl(sourceUrl)) {
-      throw new Error('Safety stop: resolved URL is still a feed/profile URL: ' + sourceUrl);
-    }
+  const outputPath = path.join(outputDir, \`\${video.id}.mp4\`);
+  let sourceUrl = video.source_url;
+  
+  // Check if this is a channel/playlist scrape job
+  if (isChannelOrPlaylistUrl(sourceUrl) || isYouTubeShortsFeedUrl(sourceUrl.split('#')[0])) {
+    // Resolve to individual video URL using cache + random sampling
+    sourceUrl = await resolveScrapeVideoUrl(video.source_url);
+    console.log(\`📹 Resolved to individual video URL: \${sourceUrl}\`);
   }
-
-  console.log('📥 Downloading: ' + (video.title || sourceUrl));
+  
+  console.log(\`📥 Downloading: \${video.title || sourceUrl}\`);
   
   try {
     // Use yt-dlp to download the individual video (NEVER a feed URL)
