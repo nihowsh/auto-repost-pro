@@ -483,6 +483,47 @@ async function updateVideoStatus(videoId, status, extra = {}) {
   });
 }
 
+// Check if URL is a channel/playlist URL that needs video extraction
+function isChannelOrPlaylistUrl(url) {
+  const channelPatterns = [
+    /youtube\\.com\\/@[^/]+/,
+    /youtube\\.com\\/channel\\//,
+    /youtube\\.com\\/c\\//,
+    /youtube\\.com\\/user\\//,
+    /youtube\\.com\\/@[^/]+\\/shorts/,
+    /youtube\\.com\\/playlist\\?list=/,
+  ];
+  return channelPatterns.some(pattern => pattern.test(url));
+}
+
+// Extract individual video URLs from a channel/playlist URL
+async function extractVideoUrls(channelUrl, limit = 10) {
+  console.log(\`🔍 Extracting up to \${limit} video URLs from channel...\`);
+  
+  try {
+    // Use --flat-playlist to get video URLs without downloading
+    const args = [
+      '--flat-playlist',
+      '--print', 'url',
+      '--playlist-end', String(limit),
+      '--no-warnings',
+      channelUrl,
+    ];
+    
+    const result = execSync(\`yt-dlp \${args.map(a => \`"\${a}"\`).join(' ')}\`, {
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    
+    const urls = result.trim().split('\\n').filter(url => url.startsWith('http'));
+    console.log(\`✅ Extracted \${urls.length} video URLs\`);
+    return urls;
+  } catch (error) {
+    console.error('Failed to extract video URLs:', error.message);
+    throw error;
+  }
+}
+
 async function downloadVideo(video) {
   const outputDir = path.join(process.cwd(), 'downloads');
   if (!fs.existsSync(outputDir)) {
@@ -490,17 +531,56 @@ async function downloadVideo(video) {
   }
 
   const outputPath = path.join(outputDir, \`\${video.id}.mp4\`);
+  let sourceUrl = video.source_url;
   
-  console.log(\`📥 Downloading: \${video.title || video.source_url}\`);
+  // Check if this is a channel scrape job (source_url contains channel URL pattern)
+  // The scrape_channel_url field or a special marker in source_url indicates this
+  if (isChannelOrPlaylistUrl(sourceUrl)) {
+    // Extract limit from source_url if present (format: url#limit=N)
+    let limit = 10;
+    if (sourceUrl.includes('#limit=')) {
+      const match = sourceUrl.match(/#limit=(\\d+)/);
+      if (match) {
+        limit = parseInt(match[1], 10);
+        sourceUrl = sourceUrl.split('#limit=')[0];
+      }
+    }
+    
+    // Extract individual video URLs first
+    const videoUrls = await extractVideoUrls(sourceUrl, limit);
+    
+    if (videoUrls.length === 0) {
+      throw new Error('No videos found in channel');
+    }
+    
+    // Use the first video URL (for channel scrape, each job handles one video)
+    // The index is encoded in source_url as #index=N
+    let index = 0;
+    if (video.source_url.includes('#index=')) {
+      const match = video.source_url.match(/#index=(\\d+)/);
+      if (match) {
+        index = parseInt(match[1], 10);
+      }
+    }
+    
+    if (index >= videoUrls.length) {
+      throw new Error(\`Video index \${index} out of range (only \${videoUrls.length} videos found)\`);
+    }
+    
+    sourceUrl = videoUrls[index];
+    console.log(\`📹 Using video URL [\${index + 1}/\${videoUrls.length}]: \${sourceUrl}\`);
+  }
+  
+  console.log(\`📥 Downloading: \${video.title || sourceUrl}\`);
   
   try {
-    // Use yt-dlp to download
+    // Use yt-dlp to download the individual video
     const args = [
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '-o', outputPath,
       '--no-playlist',
-      video.source_url,
+      sourceUrl,
     ];
     
     // For shorts, limit duration
