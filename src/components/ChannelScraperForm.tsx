@@ -72,31 +72,35 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
 
     setLoading(true);
 
-    try {
-      // Create video rows with pending_download status for the local runner to process
-      const videoPromises = [];
-      for (let i = 0; i < videoCount; i++) {
-        videoPromises.push(
-          supabase.functions.invoke('process-video', {
-            body: {
-              source_url: `${channelUrl}#video-${i + 1}`,
-              source_type: platform,
-              title: `Video ${i + 1} from channel`,
-              description: `Queued from channel scrape - waiting for local runner`,
-              tags: [],
-              thumbnail_url: null,
-              channel_id: channel.id,
-              is_channel_scrape: true,
-              scrape_index: i,
-              scrape_total: videoCount,
-              scrape_channel_url: channelUrl,
-            },
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-            },
-          })
-        );
-      }
+      try {
+        // Create video rows with pending_download status for the local runner to process.
+        // We encode scrape parameters into source_url so the local runner can:
+        // 1) extract candidate IDs from the channel feed
+        // 2) randomly pick N IDs (based on limit)
+        // 3) download ONLY individual video URLs (never the /shorts feed)
+        const videoPromises = [];
+        for (let i = 0; i < videoCount; i++) {
+          videoPromises.push(
+            supabase.functions.invoke('process-video', {
+              body: {
+                source_url: `${channelUrl}#limit=${videoCount}#index=${i}`,
+                source_type: platform,
+                title: `Video ${i + 1} from channel`,
+                description: `Queued from channel scrape - waiting for local runner`,
+                tags: [],
+                thumbnail_url: null,
+                channel_id: channel.id,
+                is_channel_scrape: true,
+                scrape_index: i,
+                scrape_total: videoCount,
+                scrape_channel_url: channelUrl,
+              },
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            })
+          );
+        }
 
       await Promise.all(videoPromises);
 
