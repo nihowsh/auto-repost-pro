@@ -21,16 +21,16 @@ interface VideoCardProps {
   onDelete?: (videoId: string) => Promise<void>;
 }
 
-const statusConfig: Record<string, { label: string; icon: any; class: string }> = {
-  pending: { label: 'Pending', icon: Clock, class: 'status-pending' },
-  pending_download: { label: 'Waiting for Local Runner', icon: Clock, class: 'status-pending' },
-  downloading: { label: 'Downloading', icon: Loader2, class: 'status-downloading' },
-  processing: { label: 'Processing', icon: Loader2, class: 'status-processing' },
-  ready: { label: 'Ready', icon: CheckCircle, class: 'status-ready' },
-  uploading: { label: 'Uploading', icon: Loader2, class: 'status-uploading' },
-  scheduled: { label: 'Scheduled', icon: Clock, class: 'status-scheduled' },
-  published: { label: 'Published', icon: CheckCircle, class: 'status-published' },
-  failed: { label: 'Failed', icon: AlertCircle, class: 'status-failed' },
+const statusConfig: Record<string, { label: string; icon: any; class: string; description?: string }> = {
+  pending: { label: 'Pending', icon: Clock, class: 'status-pending', description: 'Queued for processing' },
+  pending_download: { label: 'Waiting for Runner', icon: Clock, class: 'status-pending', description: 'Start local-runner.cjs to download' },
+  downloading: { label: 'Downloading', icon: Loader2, class: 'status-downloading', description: 'Local runner downloading video' },
+  processing: { label: 'Processing', icon: Loader2, class: 'status-processing', description: 'Preparing for YouTube upload' },
+  ready: { label: 'Ready', icon: CheckCircle, class: 'status-ready', description: 'Ready to upload' },
+  uploading: { label: 'Uploading to YouTube', icon: Loader2, class: 'status-uploading', description: 'Uploading video to your channel' },
+  scheduled: { label: 'Scheduled', icon: Clock, class: 'status-scheduled', description: 'Will publish at scheduled time' },
+  published: { label: 'Published', icon: CheckCircle, class: 'status-published', description: 'Live on YouTube' },
+  failed: { label: 'Failed', icon: AlertCircle, class: 'status-failed', description: 'Upload failed - retry available' },
 };
 
 export function VideoCard({ video, onDelete }: VideoCardProps) {
@@ -164,9 +164,16 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
           </div>
 
           {/* Status Badge */}
-          <div className={`status-badge flex-shrink-0 ${status.class}`}>
-            <StatusIcon className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
-            {status.label}
+          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+            <div className={`status-badge ${status.class}`}>
+              <StatusIcon className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
+              {status.label}
+            </div>
+            {status.description && isProcessing && (
+              <span className="text-xs text-muted-foreground animate-pulse">
+                {status.description}
+              </span>
+            )}
           </div>
         </div>
 

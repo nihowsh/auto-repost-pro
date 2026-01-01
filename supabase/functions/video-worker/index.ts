@@ -276,8 +276,19 @@ async function processVideo(videoId: string) {
 
   // Upload to YouTube
   try {
+    // Sanitize title - YouTube rejects certain characters
+    let sanitizedTitle = ((video.title as string) || "Untitled").trim();
+    // Remove or replace problematic characters but keep emojis
+    if (!sanitizedTitle || sanitizedTitle.length === 0) {
+      sanitizedTitle = "Untitled Video";
+    }
+    // Truncate to 100 chars (YouTube limit)
+    if (sanitizedTitle.length > 100) {
+      sanitizedTitle = sanitizedTitle.substring(0, 97) + "...";
+    }
+    
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
-      title: (video.title as string) || "Untitled",
+      title: sanitizedTitle,
       description: (video.description as string) || "",
       tags: (video.tags as string[]) || [],
       isShort: Boolean(video.is_short),
