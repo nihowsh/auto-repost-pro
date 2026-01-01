@@ -720,6 +720,28 @@ async function resolveScrapeVideoUrl(sourceUrl) {
   return cachedUrls[index];
 }
 
+async function getTitleFromUrl(url) {
+  try {
+    const args = [
+      '--skip-download',
+      '--no-playlist',
+      '--print', 'title',
+      '--no-warnings',
+      url,
+    ];
+
+    const result = execSync('yt-dlp ' + args.map((a) => '"' + a + '"').join(' '), {
+      encoding: 'utf8',
+      maxBuffer: 5 * 1024 * 1024,
+    });
+
+    const title = String(result || '').trim().split('\n')[0]?.trim();
+    return title && title.length > 0 ? title : null;
+  } catch {
+    return null;
+  }
+}
+
 async function downloadVideo(video) {
   const outputDir = path.join(process.cwd(), 'downloads');
   if (!fs.existsSync(outputDir)) {
@@ -735,6 +757,14 @@ async function downloadVideo(video) {
     // Resolve to individual video URL using cache + random sampling
     sourceUrl = await resolveScrapeVideoUrl(video.source_url);
     console.log('📹 Resolved to individual video URL: ' + sourceUrl);
+
+    // Fill original title for better UX (and to avoid generic titles)
+    const resolvedTitle = await getTitleFromUrl(sourceUrl);
+    if (resolvedTitle) {
+      await updateVideoFields(video.id, { title: resolvedTitle });
+      video.title = resolvedTitle;
+      console.log('🏷️  Set original title:', resolvedTitle);
+    }
   }
 
   console.log('📥 Downloading: ' + (video.title || sourceUrl));
@@ -759,7 +789,11 @@ async function downloadVideo(video) {
     });
 
     if (!fs.existsSync(expectedMp4Path)) {
-      throw new Error('yt-dlp did not produce an output file at ' + expectedMp4Path + ' (it may have been skipped by filters)');
+      throw new Error(
+        'yt-dlp did not produce an output file at ' +
+          expectedMp4Path +
+          ' (it may have been skipped by filters)'
+      );
     }
 
     return expectedMp4Path;
