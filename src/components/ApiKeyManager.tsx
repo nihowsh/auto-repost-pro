@@ -823,7 +823,8 @@ async function triggerVideoWorker(videoId) {
 }
 
 async function processVideo(video) {
-  console.log(\`\\n🎬 Processing: \${video.title || video.id}\`);
+  console.log('');
+  console.log('🎬 Processing: ' + (video.title || video.id));
   
   try {
     // Update status to downloading
@@ -832,23 +833,30 @@ async function processVideo(video) {
     // Download the video
     const filePath = await downloadVideo(video);
     
+    console.log('📤 Uploading to storage...');
     // Upload to storage
     const storagePath = await uploadToStorage(video.id, filePath);
     
-    // Update video record
+    // IMPORTANT: Update video record with file path FIRST and wait for it
+    console.log('💾 Updating database with file path...');
     await updateVideoStatus(video.id, 'processing', {
       video_file_path: storagePath,
+      error_message: null,
     });
     
-    // Trigger the video worker to upload to YouTube
+    // Small delay to ensure DB update is committed before triggering worker
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Now trigger the video worker to upload to YouTube
+    console.log('🚀 Triggering YouTube upload...');
     await triggerVideoWorker(video.id);
     
     // Clean up local file
     fs.unlinkSync(filePath);
     
-    console.log(\`✅ Video processed: \${video.id}\`);
+    console.log('✅ Video handed off to YouTube uploader: ' + video.id);
   } catch (error) {
-    console.error(\`❌ Error processing video \${video.id}:\`, error.message);
+    console.error('❌ Error processing video ' + video.id + ':', error.message);
     await updateVideoStatus(video.id, 'failed', {
       error_message: error.message,
     });
