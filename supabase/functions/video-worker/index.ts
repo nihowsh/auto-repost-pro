@@ -276,16 +276,22 @@ async function processVideo(videoId: string) {
 
   // Upload to YouTube
   try {
-    // Sanitize title - YouTube rejects certain characters
-    let sanitizedTitle = ((video.title as string) || "Untitled").trim();
-    // Remove or replace problematic characters but keep emojis
-    if (!sanitizedTitle || sanitizedTitle.length === 0) {
-      sanitizedTitle = "Untitled Video";
+    // Robust title sanitization - YouTube rejects empty/invalid titles
+    let rawTitle = ((video.title as string) || "").trim();
+    
+    // Remove zero-width characters and control characters that break YouTube
+    rawTitle = rawTitle.replace(/[\u200B-\u200D\uFEFF\u0000-\u001F\u007F-\u009F]/g, "");
+    
+    // If title becomes empty after cleanup, use video ID as fallback
+    let sanitizedTitle = rawTitle.length > 0 ? rawTitle : `Video ${videoId.substring(0, 8)}`;
+    
+    // Truncate to 100 chars (YouTube limit) - leave room for #Shorts if needed
+    const maxLength = Boolean(video.is_short) ? 91 : 100; // 91 + " #Shorts" = 99
+    if (sanitizedTitle.length > maxLength) {
+      sanitizedTitle = sanitizedTitle.substring(0, maxLength - 3) + "...";
     }
-    // Truncate to 100 chars (YouTube limit)
-    if (sanitizedTitle.length > 100) {
-      sanitizedTitle = sanitizedTitle.substring(0, 97) + "...";
-    }
+    
+    console.log("Final title for YouTube:", sanitizedTitle, "Length:", sanitizedTitle.length);
     
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
       title: sanitizedTitle,
