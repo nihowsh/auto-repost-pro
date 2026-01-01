@@ -131,12 +131,12 @@ export function ApiKeyManager() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'local-runner.js';
+    a.download = 'local-runner.cjs';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     toast({
       title: 'Script downloaded',
       description: 'Check the README section below for setup instructions',
@@ -397,11 +397,18 @@ function loadEnv() {
     const envPath = path.join(process.cwd(), '.env');
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, 'utf8');
-      envContent.split('\\n').forEach(line => {
-        const [key, ...valueParts] = line.split('=');
-        if (key && valueParts.length > 0) {
-          process.env[key.trim()] = valueParts.join('=').trim();
-        }
+      envContent.split(/\r?\n/).forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+
+        const [keyRaw, ...valueParts] = trimmed.split('=');
+        if (!keyRaw || valueParts.length === 0) return;
+
+        const key = keyRaw.trim();
+        let value = valueParts.join('=').trim();
+        // strip surrounding quotes
+        value = value.replace(/^"|"$/g, '').replace(/^'|'$/g, '');
+        process.env[key] = value;
       });
     }
   } catch (error) {
@@ -719,38 +726,43 @@ async function downloadVideo(video) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const outputPath = path.join(outputDir, \`\${video.id}.mp4\`);
+  const outputTemplate = path.join(outputDir, video.id + '.%(ext)s');
+  const expectedMp4Path = path.join(outputDir, video.id + '.mp4');
   let sourceUrl = video.source_url;
-  
+
   // Check if this is a channel/playlist scrape job
   if (isChannelOrPlaylistUrl(sourceUrl) || isYouTubeShortsFeedUrl(sourceUrl.split('#')[0])) {
     // Resolve to individual video URL using cache + random sampling
     sourceUrl = await resolveScrapeVideoUrl(video.source_url);
-    console.log(\`📹 Resolved to individual video URL: \${sourceUrl}\`);
+    console.log('📹 Resolved to individual video URL: ' + sourceUrl);
   }
-  
-  console.log(\`📥 Downloading: \${video.title || sourceUrl}\`);
-  
+
+  console.log('📥 Downloading: ' + (video.title || sourceUrl));
+
   try {
     // Use yt-dlp to download the individual video (NEVER a feed URL)
     const args = [
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
-      '-o', outputPath,
+      '-o', outputTemplate,
       '--no-playlist',
       sourceUrl,
     ];
-    
+
     // For shorts, limit duration
     if (video.is_short) {
       args.unshift('--match-filter', 'duration<=60');
     }
-    
-    execSync(\`yt-dlp \${args.map(a => \`"\${a}"\`).join(' ')}\`, {
+
+    execSync('yt-dlp ' + args.map(a => '"' + a + '"').join(' '), {
       stdio: 'inherit',
     });
-    
-    return outputPath;
+
+    if (!fs.existsSync(expectedMp4Path)) {
+      throw new Error('yt-dlp did not produce an output file at ' + expectedMp4Path + ' (it may have been skipped by filters)');
+    }
+
+    return expectedMp4Path;
   } catch (error) {
     console.error('Download failed:', error.message);
     throw error;
