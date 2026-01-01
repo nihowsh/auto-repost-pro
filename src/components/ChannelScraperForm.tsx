@@ -85,9 +85,10 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
               body: {
                 source_url: `${channelUrl}#limit=${videoCount}#index=${i}`,
                 source_type: platform,
-                title: `Video ${i + 1} from channel`,
-                description: `Queued from channel scrape - waiting for local runner`,
-                tags: [],
+                // Title/metadata will be filled by the local runner from the resolved individual video.
+                title: null,
+                description: null,
+                tags: null,
                 thumbnail_url: null,
                 channel_id: channel.id,
                 is_channel_scrape: true,
