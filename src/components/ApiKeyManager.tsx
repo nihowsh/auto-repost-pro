@@ -490,6 +490,13 @@ async function updateVideoStatus(videoId, status, extra = {}) {
   });
 }
 
+async function updateVideoFields(videoId, fields = {}) {
+  await supabaseRequest(\`videos?id=eq.\${videoId}\`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields),
+  });
+}
+
 // Check if URL is a channel/playlist URL that needs video extraction
 function isChannelOrPlaylistUrl(url) {
   const channelPatterns = [
@@ -564,8 +571,8 @@ const scrapeSelectionCache = new Map();
 
 // Extract video IDs from a Shorts feed (used ONLY for ID extraction, never for download)
 async function extractShortsCandidateIds(feedUrl, sampleSize) {
-  // Fetch more candidates than needed to have a good pool for random selection
-  const fetchLimit = Math.min(sampleSize * 3, 100);
+  // Fetch MORE candidates (5x + buffer) to ensure we have enough unique IDs after deduplication
+  const fetchLimit = Math.min(sampleSize * 6, 200);
   
   console.log(\`🔍 Extracting candidate video IDs from Shorts feed (fetching \${fetchLimit} for sampling \${sampleSize})...\`);
   
@@ -584,9 +591,12 @@ async function extractShortsCandidateIds(feedUrl, sampleSize) {
       maxBuffer: 10 * 1024 * 1024,
     });
     
-    const ids = result.trim().split('\\n').filter(id => id && id.length > 0);
-    console.log(\`✅ Extracted \${ids.length} candidate video IDs\`);
-    return ids;
+    // DEDUPLICATE: yt-dlp can return the same ID multiple times for Shorts feeds
+    const rawIds = result.trim().split('\\n').map(id => id.trim()).filter(id => id && id.length > 0);
+    const uniqueIds = [...new Set(rawIds)];
+    
+    console.log(\`✅ Extracted \${uniqueIds.length} unique candidate video IDs (from \${rawIds.length} raw)\`);
+    return uniqueIds;
   } catch (error) {
     console.error('Failed to extract video IDs:', error.message);
     throw error;
@@ -595,8 +605,8 @@ async function extractShortsCandidateIds(feedUrl, sampleSize) {
 
 // Extract Reel shortcodes from an Instagram profile (used ONLY for ID extraction, never for download)
 async function extractInstagramReelIds(profileUrl, sampleSize) {
-  // Fetch more candidates than needed for random selection
-  const fetchLimit = Math.min(sampleSize * 3, 100);
+  // Fetch MORE candidates (5x + buffer) to ensure enough unique IDs after deduplication
+  const fetchLimit = Math.min(sampleSize * 6, 200);
   
   // Normalize URL to reels tab if not already
   let reelsUrl = profileUrl;
@@ -621,9 +631,12 @@ async function extractInstagramReelIds(profileUrl, sampleSize) {
       maxBuffer: 10 * 1024 * 1024,
     });
     
-    const ids = result.trim().split('\\n').filter(id => id && id.length > 0);
-    console.log(\`✅ Extracted \${ids.length} candidate Reel IDs (shortcodes)\`);
-    return ids;
+    // DEDUPLICATE: yt-dlp can return duplicates
+    const rawIds = result.trim().split('\\n').map(id => id.trim()).filter(id => id && id.length > 0);
+    const uniqueIds = [...new Set(rawIds)];
+    
+    console.log(\`✅ Extracted \${uniqueIds.length} unique candidate Reel IDs (from \${rawIds.length} raw)\`);
+    return uniqueIds;
   } catch (error) {
     console.error('Failed to extract Instagram Reel IDs:', error.message);
     throw error;
@@ -632,13 +645,15 @@ async function extractInstagramReelIds(profileUrl, sampleSize) {
 
 // Extract individual video URLs from a regular channel/playlist URL
 async function extractVideoUrls(channelUrl, limit = 10) {
-  console.log(\`🔍 Extracting up to \${limit} video URLs from channel...\`);
+  // Fetch more to have buffer for deduplication
+  const fetchLimit = Math.min(limit * 3, 100);
+  console.log(\`🔍 Extracting up to \${fetchLimit} video URLs from channel (need \${limit})...\`);
   
   try {
     const args = [
       '--flat-playlist',
       '--print', 'url',
-      '--playlist-end', String(limit),
+      '--playlist-end', String(fetchLimit),
       '--no-warnings',
       channelUrl,
     ];
@@ -648,9 +663,12 @@ async function extractVideoUrls(channelUrl, limit = 10) {
       maxBuffer: 10 * 1024 * 1024,
     });
     
-    const urls = result.trim().split('\\n').filter(url => url.startsWith('http'));
-    console.log(\`✅ Extracted \${urls.length} video URLs\`);
-    return urls;
+    // DEDUPLICATE URLs
+    const rawUrls = result.trim().split('\\n').filter(url => url.startsWith('http'));
+    const uniqueUrls = [...new Set(rawUrls)];
+    
+    console.log(\`✅ Extracted \${uniqueUrls.length} unique video URLs\`);
+    return uniqueUrls;
   } catch (error) {
     console.error('Failed to extract video URLs:', error.message);
     throw error;
