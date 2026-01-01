@@ -856,22 +856,37 @@ async function uploadToStorage(videoId, filePath) {
 async function triggerVideoWorker(videoId) {
   console.log('🚀 Triggering YouTube upload via video-worker...');
   
-  const response = await fetch(SUPABASE_FUNCTION_URL + '/video-worker', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': supabaseServiceKey,
-      'Authorization': 'Bearer ' + supabaseServiceKey,
-    },
-    body: JSON.stringify({ video_id: videoId }),
-  });
-  
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error('Video worker failed: ' + error);
+  // Retry up to 3 times with delay
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(SUPABASE_FUNCTION_URL + '/video-worker', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': supabaseServiceKey,
+          'Authorization': 'Bearer ' + supabaseServiceKey,
+        },
+        body: JSON.stringify({ video_id: videoId }),
+      });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error('Video worker failed: ' + error);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Video worker completed - YouTube video ID:', result.youtube_video_id || 'processing');
+      return result;
+    } catch (err) {
+      lastError = err;
+      console.warn('⚠️ Attempt ' + attempt + '/3 failed: ' + err.message);
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
   }
-  
-  console.log('✅ Video worker triggered - uploading to YouTube');
+  throw lastError;
 }
 
 async function processVideo(video) {
