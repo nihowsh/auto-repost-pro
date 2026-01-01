@@ -771,19 +771,22 @@ async function downloadVideo(video) {
 
 async function uploadToStorage(videoId, filePath) {
   const fileName = path.basename(filePath);
-  const storagePath = \`\${userId}/\${videoId}/\${fileName}\`;
+  const storagePath = userId + '/' + videoId + '/' + fileName;
+  const encodedPath = storagePath.split('/').map(encodeURIComponent).join('/');
   
-  console.log(\`☁️ Uploading to storage: \${storagePath}\`);
+  console.log('☁️ Uploading to storage: ' + storagePath);
   
   const fileContent = fs.readFileSync(filePath);
   
   const response = await fetch(
-    \`\${supabaseUrl}/storage/v1/object/videos/\${storagePath}\`,
+    supabaseUrl + '/storage/v1/object/videos/' + encodedPath,
     {
-      method: 'POST',
+      method: 'PUT',
       headers: {
-        'Authorization': \`Bearer \${supabaseServiceKey}\`,
+        'apikey': supabaseServiceKey,
+        'Authorization': 'Bearer ' + supabaseServiceKey,
         'Content-Type': 'video/mp4',
+        'x-upsert': 'true',
       },
       body: fileContent,
     }
@@ -791,28 +794,32 @@ async function uploadToStorage(videoId, filePath) {
   
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(\`Upload failed: \${error}\`);
+    throw new Error('Upload failed: ' + error);
   }
   
+  console.log('✅ Uploaded to storage successfully');
   return storagePath;
 }
 
 async function triggerVideoWorker(videoId) {
-  console.log('🚀 Triggering video worker...');
+  console.log('🚀 Triggering YouTube upload via video-worker...');
   
-  const response = await fetch(\`\${SUPABASE_FUNCTION_URL}/video-worker\`, {
+  const response = await fetch(SUPABASE_FUNCTION_URL + '/video-worker', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': \`Bearer \${supabaseServiceKey}\`,
+      'apikey': supabaseServiceKey,
+      'Authorization': 'Bearer ' + supabaseServiceKey,
     },
     body: JSON.stringify({ video_id: videoId }),
   });
   
   if (!response.ok) {
     const error = await response.text();
-    console.error('Worker trigger failed:', error);
+    throw new Error('Video worker failed: ' + error);
   }
+  
+  console.log('✅ Video worker triggered - uploading to YouTube');
 }
 
 async function processVideo(video) {
