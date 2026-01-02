@@ -78,6 +78,15 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
       return;
     }
 
+    if (platform !== 'youtube') {
+      toast({
+        title: 'Not supported yet',
+        description: 'Instagram channel scraping is not yet supported. Please use individual video URLs.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!session?.access_token) {
       toast({
         title: 'Session expired',
@@ -89,43 +98,40 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
 
     setLoading(true);
 
-      try {
-        // Create video rows with pending_download status for the local runner to process.
-        // We encode scrape parameters into source_url so the local runner can:
-        // 1) extract candidate IDs from the channel feed
-        // 2) randomly pick N IDs (based on limit)
-        // 3) download ONLY individual video URLs (never the /shorts feed)
-        const videoPromises = [];
-        for (let i = 0; i < videoCount; i++) {
-          videoPromises.push(
-            supabase.functions.invoke('process-video', {
-              body: {
-                source_url: `${channelUrl}#limit=${videoCount}#index=${i}`,
-                source_type: platform,
-                title: null,
-                description: null,
-                tags: null,
-                thumbnail_url: null,
-                channel_id: channel.id,
-                is_channel_scrape: true,
-                scrape_index: i,
-                scrape_total: videoCount,
-                scrape_channel_url: channelUrl,
-                schedule_interval_hours: parseInt(scheduleInterval, 10),
-              },
-              headers: {
-                Authorization: `Bearer ${session.access_token}`,
-              },
-            })
-          );
-        }
-
-      await Promise.all(videoPromises);
-
-      toast({
-        title: 'Videos queued for download',
-        description: `${videoCount} videos added to queue. Your Local Runner will process them with yt-dlp.`,
+    try {
+      // Call the scrape-channel function which:
+      // 1. Resolves the channel URL to individual video URLs using YouTube API
+      // 2. Fetches metadata (title, description, thumbnail) for each video
+      // 3. Creates unique video records in the database
+      const { data, error } = await supabase.functions.invoke('scrape-channel', {
+        body: {
+          channel_url: channelUrl,
+          video_count: videoCount,
+          channel_id: channel.id,
+          schedule_interval_hours: parseInt(scheduleInterval, 10),
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
       });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const videosQueued = data?.videos_queued ?? 0;
+
+      if (videosQueued === 0) {
+        toast({
+          title: 'No Shorts found',
+          description: 'Could not find any YouTube Shorts on this channel.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Videos queued for download',
+          description: `${videosQueued} unique videos added to queue with metadata. Your Local Runner will process them.`,
+        });
+      }
 
       setChannelUrl('');
       setVideoCount(10);
