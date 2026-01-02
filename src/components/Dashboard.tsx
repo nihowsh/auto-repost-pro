@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useVideos } from '@/hooks/useVideos';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
@@ -48,6 +48,13 @@ export function Dashboard() {
   const [uploadMode, setUploadMode] = useState<'single' | 'batch' | 'scraper'>('single');
   const [confirmClearQueueOpen, setConfirmClearQueueOpen] = useState(false);
   const [clearingQueue, setClearingQueue] = useState(false);
+  const [scheduledChannelFilter, setScheduledChannelFilter] = useState<string | null>(null);
+
+  // Filter scheduled videos by selected channel
+  const filteredScheduledVideos = useMemo(() => {
+    if (!scheduledChannelFilter) return scheduledVideos;
+    return scheduledVideos.filter((v) => v.channel_id === scheduledChannelFilter);
+  }, [scheduledVideos, scheduledChannelFilter]);
 
   const tabs = [
     { id: 'upload', label: 'Upload', icon: Upload, count: null },
@@ -184,19 +191,65 @@ export function Dashboard() {
           </AlertDialog>
         </TabsContent>
 
-        <TabsContent value="scheduled" className="animate-fade-in">
-          <div className="glass-card p-4 mb-4 bg-primary/5 border-primary/20">
+        <TabsContent value="scheduled" className="animate-fade-in space-y-4">
+          <div className="glass-card p-4 bg-primary/5 border-primary/20">
             <p className="text-sm text-muted-foreground">
               <Clock className="w-4 h-4 inline mr-2" />
               Videos below will be automatically uploaded to YouTube when their scheduled time arrives. 
               The system checks every 5 minutes.
             </p>
           </div>
+
+          {/* Channel Filter */}
+          {channels.length > 1 && (
+            <div className="flex gap-2 p-1 bg-card border border-border rounded-lg w-fit">
+              <button
+                onClick={() => setScheduledChannelFilter(null)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  scheduledChannelFilter === null
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                }`}
+              >
+                All Channels
+                <span className="ml-1 px-2 py-0.5 text-xs rounded-full bg-muted/50">
+                  {scheduledVideos.length}
+                </span>
+              </button>
+              {channels.map((ch) => {
+                const count = scheduledVideos.filter((v) => v.channel_id === ch.id).length;
+                return (
+                  <button
+                    key={ch.id}
+                    onClick={() => setScheduledChannelFilter(ch.id)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                      scheduledChannelFilter === ch.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                    }`}
+                  >
+                    {ch.channel_thumbnail && (
+                      <img
+                        src={ch.channel_thumbnail}
+                        alt=""
+                        className="w-5 h-5 rounded-full"
+                      />
+                    )}
+                    <span className="max-w-[120px] truncate">{ch.channel_title}</span>
+                    <span className="ml-1 px-2 py-0.5 text-xs rounded-full bg-muted/50">
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <VideoList
-            videos={scheduledVideos}
+            videos={filteredScheduledVideos}
             loading={loading}
             emptyMessage="No scheduled videos"
-            emptyDescription="Videos will appear here after processing"
+            emptyDescription={scheduledChannelFilter ? "No videos scheduled for this channel" : "Videos will appear here after processing"}
             onDelete={deleteVideo}
             onUpdate={refetchVideos}
             showCountdown
