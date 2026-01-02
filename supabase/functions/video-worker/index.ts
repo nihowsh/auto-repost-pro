@@ -14,6 +14,18 @@ const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // ───────────────────────────────────────────────────────────────────────────
+// Constants for rate-limiting / sequential upload
+// ───────────────────────────────────────────────────────────────────────────
+const MIN_DELAY_MINUTES = 7;
+const MAX_DELAY_MINUTES = 15;
+
+function randomDelayMs(): number {
+  const minMs = MIN_DELAY_MINUTES * 60 * 1000;
+  const maxMs = MAX_DELAY_MINUTES * 60 * 1000;
+  return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -49,6 +61,112 @@ async function refreshGoogleAccessToken(refreshToken: string) {
     access_token: String(data.access_token),
     expires_in: Number(data.expires_in ?? 3600),
   };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Per-channel locking helpers
+// ───────────────────────────────────────────────────────────────────────────
+
+interface LockRecord {
+  channel_id: string;
+  locked_by_video_id: string | null;
+  lock_acquired_at: string;
+  locked_until: string;
+  next_allowed_upload_at: string;
+}
+
+/**
+ * Attempts to acquire an exclusive upload lock for a channel.
+ * Returns true if lock acquired (this video may proceed).
+ * Returns false if another upload is in progress or next_allowed_upload_at is in the future.
+ */
+async function tryAcquireLock(channelId: string, videoId: string): Promise<boolean> {
+  const now = new Date();
+  const lockDurationMs = 30 * 60 * 1000; // 30 min max lock (safety)
+  const lockedUntil = new Date(now.getTime() + lockDurationMs);
+
+  // Check current lock state
+  const { data: existing } = await supabase
+    .from("channel_upload_locks")
+    .select("*")
+    .eq("channel_id", channelId)
+    .maybeSingle();
+
+  if (existing) {
+    const lock = existing as LockRecord;
+    const nextAllowed = new Date(lock.next_allowed_upload_at);
+    const currentLockUntil = new Date(lock.locked_until);
+
+    // Check if we need to wait for rate-limit cooldown
+    if (nextAllowed > now) {
+      console.log(`Channel ${channelId} rate-limited until ${nextAllowed.toISOString()}`);
+      return false;
+    }
+
+    // Check if another video holds the lock
+    if (lock.locked_by_video_id && lock.locked_by_video_id !== videoId && currentLockUntil > now) {
+      console.log(`Channel ${channelId} locked by video ${lock.locked_by_video_id} until ${currentLockUntil.toISOString()}`);
+      return false;
+    }
+
+    // Lock available - acquire it
+    const { error } = await supabase
+      .from("channel_upload_locks")
+      .update({
+        locked_by_video_id: videoId,
+        lock_acquired_at: now.toISOString(),
+        locked_until: lockedUntil.toISOString(),
+      })
+      .eq("channel_id", channelId);
+
+    if (error) {
+      console.error("Failed to update lock:", error);
+      return false;
+    }
+    return true;
+  }
+
+  // No existing lock - create one
+  const { error } = await supabase
+    .from("channel_upload_locks")
+    .insert({
+      channel_id: channelId,
+      locked_by_video_id: videoId,
+      lock_acquired_at: now.toISOString(),
+      locked_until: lockedUntil.toISOString(),
+      next_allowed_upload_at: now.toISOString(),
+    });
+
+  if (error) {
+    console.error("Failed to insert lock:", error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Releases the lock and sets next_allowed_upload_at with random delay (7-15 min)
+ */
+async function releaseLock(channelId: string, videoId: string): Promise<void> {
+  const now = new Date();
+  const delayMs = randomDelayMs();
+  const nextAllowed = new Date(now.getTime() + delayMs);
+
+  console.log(`Releasing lock for channel ${channelId}, next upload allowed at ${nextAllowed.toISOString()} (${Math.round(delayMs / 60000)} min delay)`);
+
+  const { error } = await supabase
+    .from("channel_upload_locks")
+    .update({
+      locked_by_video_id: null,
+      locked_until: now.toISOString(),
+      next_allowed_upload_at: nextAllowed.toISOString(),
+    })
+    .eq("channel_id", channelId)
+    .eq("locked_by_video_id", videoId);
+
+  if (error) {
+    console.warn("Failed to release lock:", error);
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -145,7 +263,6 @@ async function uploadThumbnail(
   try {
     console.log("Fetching thumbnail from:", thumbnailUrl);
     
-    // Fetch the thumbnail image
     const imgResp = await fetch(thumbnailUrl);
     if (!imgResp.ok) {
       console.warn("Failed to fetch thumbnail:", imgResp.status);
@@ -157,7 +274,6 @@ async function uploadThumbnail(
     
     console.log("Uploading thumbnail to YouTube, size:", imgBuffer.byteLength);
     
-    // Upload to YouTube
     const uploadUrl = new URL("https://www.googleapis.com/upload/youtube/v3/thumbnails/set");
     uploadUrl.searchParams.set("videoId", youtubeVideoId);
     uploadUrl.searchParams.set("uploadType", "media");
@@ -187,9 +303,8 @@ async function uploadThumbnail(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Main worker logic - expects video to already be in storage (uploaded by desktop app via yt-dlp)
-// Respects scheduled_publish_at - if video is scheduled for future, sets status to "scheduled"
-// and uses YouTube's publishAt feature for scheduled publishing
+// Main worker logic
+// Sequential per-channel: only one upload at a time per channel with 7-15 min delay
 // ───────────────────────────────────────────────────────────────────────────
 
 async function processVideo(videoId: string) {
@@ -213,13 +328,13 @@ async function processVideo(videoId: string) {
   // Check if this video is scheduled for the future
   const scheduledTime = scheduledAt ? new Date(scheduledAt).getTime() : null;
   const now = Date.now();
-  const isScheduledForFuture = scheduledTime && scheduledTime > now + 60_000; // 1 min buffer
+  const isScheduledForFuture = scheduledTime && scheduledTime > now + 60_000;
 
   if (isScheduledForFuture) {
-    console.log(`Video ${videoId} is scheduled for ${scheduledAt}, setting status to 'scheduled' and will use YouTube's scheduled publish`);
+    console.log(`Video ${videoId} is scheduled for ${scheduledAt}, will use YouTube's scheduled publish`);
   }
 
-  // Check if video file exists in storage (must be uploaded by desktop app first)
+  // Check if video file exists in storage
   if (!videoFilePath) {
     console.error("No video file path - desktop app must download and upload video first");
     await updateVideoStatus(videoId, "pending_download", {
@@ -228,7 +343,7 @@ async function processVideo(videoId: string) {
     return;
   }
 
-  // Get channel - use channel_id from video if available, otherwise fallback to user's active channel
+  // Get channel
   const channelId = video.channel_id as string | null;
   let channelQuery = supabase.from("youtube_channels").select("*");
   
@@ -238,13 +353,29 @@ async function processVideo(videoId: string) {
     channelQuery = channelQuery.eq("user_id", userId).eq("is_active", true);
   }
   
-  const { data: channel, error: chErr } = await channelQuery.single();
+  const { data: channel, error: chErr } = await channelQuery.maybeSingle();
 
   if (chErr || !channel) {
     console.error("No channel found for video", chErr);
     await updateVideoStatus(videoId, "failed", { error_message: "No connected YouTube channel" });
     return;
   }
+
+  const resolvedChannelId = channel.id as string;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RATE LIMITING: Try to acquire lock for this channel
+  // If locked or rate-limited, requeue the video for later
+  // ─────────────────────────────────────────────────────────────────────────
+  const lockAcquired = await tryAcquireLock(resolvedChannelId, videoId);
+  
+  if (!lockAcquired) {
+    console.log(`Cannot process video ${videoId} now - channel ${resolvedChannelId} is rate-limited or locked. Keeping in 'processing' status for retry.`);
+    // Keep status as processing - local runner or scheduler will retry later
+    return;
+  }
+
+  console.log(`Lock acquired for channel ${resolvedChannelId}, proceeding with upload...`);
 
   let accessToken = channel.access_token as string;
   const refreshToken = channel.refresh_token as string;
@@ -282,22 +413,18 @@ async function processVideo(videoId: string) {
     await updateVideoStatus(videoId, "failed", {
       error_message: `Storage download failed: ${(err as Error).message}`,
     });
+    await releaseLock(resolvedChannelId, videoId);
     return;
   }
 
   // Upload to YouTube
   try {
-    // Robust title sanitization - YouTube rejects empty/invalid titles
+    // Robust title sanitization
     let rawTitle = ((video.title as string) || "").trim();
-    
-    // Remove zero-width characters and control characters that break YouTube
     rawTitle = rawTitle.replace(/[\u200B-\u200D\uFEFF\u0000-\u001F\u007F-\u009F]/g, "");
-    
-    // If title becomes empty after cleanup, use video ID as fallback
     let sanitizedTitle = rawTitle.length > 0 ? rawTitle : `Video ${videoId.substring(0, 8)}`;
     
-    // Truncate to 100 chars (YouTube limit) - leave room for #Shorts if needed
-    const maxLength = Boolean(video.is_short) ? 91 : 100; // 91 + " #Shorts" = 99
+    const maxLength = Boolean(video.is_short) ? 91 : 100;
     if (sanitizedTitle.length > maxLength) {
       sanitizedTitle = sanitizedTitle.substring(0, maxLength - 3) + "...";
     }
@@ -305,7 +432,6 @@ async function processVideo(videoId: string) {
     console.log("Final title for YouTube:", sanitizedTitle, "Length:", sanitizedTitle.length);
     console.log("Scheduled publish at:", scheduledAt || "immediate");
     
-    // Upload to YouTube - if scheduled, YouTube will handle the scheduled publishing
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
       title: sanitizedTitle,
       description: (video.description as string) || "",
@@ -319,11 +445,9 @@ async function processVideo(videoId: string) {
     if (thumbnailUrl) {
       console.log("Uploading thumbnail for video:", youtubeVideoId);
       await uploadThumbnail(accessToken, youtubeVideoId, thumbnailUrl);
-    } else {
-      console.log("No thumbnail URL available, skipping thumbnail upload");
     }
 
-    // Set final status based on whether video is scheduled
+    // Set final status
     if (isScheduledForFuture) {
       await updateVideoStatus(videoId, "scheduled", {
         youtube_video_id: youtubeVideoId,
@@ -339,6 +463,9 @@ async function processVideo(videoId: string) {
   } catch (err) {
     console.error("YouTube upload failed:", err);
     await updateVideoStatus(videoId, "failed", { error_message: `YouTube upload failed: ${(err as Error).message}` });
+  } finally {
+    // Always release lock with delay for next upload
+    await releaseLock(resolvedChannelId, videoId);
   }
 }
 
