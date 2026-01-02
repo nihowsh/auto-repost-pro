@@ -4,6 +4,7 @@ import { useAuth } from './useAuth';
 
 export interface Video {
   id: string;
+  channel_id: string | null;
   source_url: string;
   source_type: 'youtube' | 'instagram';
   title: string | null;
