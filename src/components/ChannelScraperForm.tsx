@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { useAuth } from '@/hooks/useAuth';
@@ -14,7 +15,22 @@ import {
   Youtube,
   Users,
   Info,
+  Timer,
 } from 'lucide-react';
+
+// Schedule interval options (in hours)
+const SCHEDULE_INTERVALS = [
+  { value: '1', label: '1 hour' },
+  { value: '2', label: '2 hours' },
+  { value: '4', label: '4 hours' },
+  { value: '6', label: '6 hours' },
+  { value: '12', label: '12 hours' },
+  { value: '24', label: '1 day' },
+  { value: '48', label: '2 days' },
+  { value: '72', label: '3 days' },
+  { value: '168', label: '1 week' },
+  { value: '720', label: '1 month' },
+];
 
 interface ChannelScraperFormProps {
   onSuccess?: () => void;
@@ -28,6 +44,7 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
   const [channelUrl, setChannelUrl] = useState('');
   const [videoCount, setVideoCount] = useState(10);
   const [loading, setLoading] = useState(false);
+  const [scheduleInterval, setScheduleInterval] = useState('4');
 
   const detectPlatform = (url: string): 'youtube' | 'instagram' | null => {
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
@@ -85,7 +102,6 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
               body: {
                 source_url: `${channelUrl}#limit=${videoCount}#index=${i}`,
                 source_type: platform,
-                // Title/metadata will be filled by the local runner from the resolved individual video.
                 title: null,
                 description: null,
                 tags: null,
@@ -95,6 +111,7 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
                 scrape_index: i,
                 scrape_total: videoCount,
                 scrape_channel_url: channelUrl,
+                schedule_interval_hours: parseInt(scheduleInterval, 10),
               },
               headers: {
                 Authorization: `Bearer ${session.access_token}`,
@@ -211,11 +228,26 @@ export function ChannelScraperForm({ onSuccess }: ChannelScraperFormProps) {
         </div>
       </div>
 
-      {/* Auto-scheduling Info */}
-      <div className="glass-card p-4 bg-muted/50">
-        <p className="text-sm text-muted-foreground">
-          <strong className="text-foreground">Auto-scheduling:</strong> Fetched videos will be automatically 
-          scheduled 4 hours apart, starting immediately if no videos are currently scheduled.
+      {/* Schedule Interval */}
+      <div className="glass-card p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+          <Timer className="w-5 h-5 text-primary" />
+          Schedule Interval
+        </h3>
+        <Select value={scheduleInterval} onValueChange={setScheduleInterval}>
+          <SelectTrigger className="bg-input border-border text-foreground">
+            <SelectValue placeholder="Select interval" />
+          </SelectTrigger>
+          <SelectContent>
+            {SCHEDULE_INTERVALS.map((interval) => (
+              <SelectItem key={interval.value} value={interval.value}>
+                {interval.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground mt-2">
+          Videos will be automatically spaced apart by this interval
         </p>
       </div>
 

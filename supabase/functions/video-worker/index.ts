@@ -188,6 +188,8 @@ async function uploadThumbnail(
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main worker logic - expects video to already be in storage (uploaded by desktop app via yt-dlp)
+// Respects scheduled_publish_at - if video is scheduled for future, sets status to "scheduled"
+// and uses YouTube's publishAt feature for scheduled publishing
 // ───────────────────────────────────────────────────────────────────────────
 
 async function processVideo(videoId: string) {
@@ -206,6 +208,16 @@ async function processVideo(videoId: string) {
 
   const userId = video.user_id as string;
   const videoFilePath = video.video_file_path as string | null;
+  const scheduledAt = (video.scheduled_publish_at as string | null) ?? null;
+
+  // Check if this video is scheduled for the future
+  const scheduledTime = scheduledAt ? new Date(scheduledAt).getTime() : null;
+  const now = Date.now();
+  const isScheduledForFuture = scheduledTime && scheduledTime > now + 60_000; // 1 min buffer
+
+  if (isScheduledForFuture) {
+    console.log(`Video ${videoId} is scheduled for ${scheduledAt}, setting status to 'scheduled' and will use YouTube's scheduled publish`);
+  }
 
   // Check if video file exists in storage (must be uploaded by desktop app first)
   if (!videoFilePath) {
@@ -237,7 +249,6 @@ async function processVideo(videoId: string) {
   let accessToken = channel.access_token as string;
   const refreshToken = channel.refresh_token as string;
   const expiresAt = new Date(channel.token_expires_at as string).getTime();
-  const now = Date.now();
 
   if (!Number.isFinite(expiresAt) || expiresAt - now < 120_000) {
     console.log("Refreshing Google token...");
@@ -292,13 +303,15 @@ async function processVideo(videoId: string) {
     }
     
     console.log("Final title for YouTube:", sanitizedTitle, "Length:", sanitizedTitle.length);
+    console.log("Scheduled publish at:", scheduledAt || "immediate");
     
+    // Upload to YouTube - if scheduled, YouTube will handle the scheduled publishing
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
       title: sanitizedTitle,
       description: (video.description as string) || "",
       tags: (video.tags as string[]) || [],
       isShort: Boolean(video.is_short),
-      publishAt: (video.scheduled_publish_at as string | null) ?? null,
+      publishAt: scheduledAt,
     });
 
     // Upload thumbnail if available
@@ -310,15 +323,19 @@ async function processVideo(videoId: string) {
       console.log("No thumbnail URL available, skipping thumbnail upload");
     }
 
-    const scheduledAt = (video.scheduled_publish_at as string | null) ?? null;
-    const isScheduled = Boolean(scheduledAt && new Date(scheduledAt).getTime() > Date.now() + 30_000);
-
-    await updateVideoStatus(videoId, isScheduled ? "scheduled" : "published", {
-      youtube_video_id: youtubeVideoId,
-      ...(isScheduled ? {} : { published_at: new Date().toISOString() }),
-    });
-
-    console.log(isScheduled ? "Video uploaded and scheduled:" : "Video published successfully:", youtubeVideoId);
+    // Set final status based on whether video is scheduled
+    if (isScheduledForFuture) {
+      await updateVideoStatus(videoId, "scheduled", {
+        youtube_video_id: youtubeVideoId,
+      });
+      console.log("Video uploaded and scheduled for:", scheduledAt, "YouTube ID:", youtubeVideoId);
+    } else {
+      await updateVideoStatus(videoId, "published", {
+        youtube_video_id: youtubeVideoId,
+        published_at: new Date().toISOString(),
+      });
+      console.log("Video published immediately:", youtubeVideoId);
+    }
   } catch (err) {
     console.error("YouTube upload failed:", err);
     await updateVideoStatus(videoId, "failed", { error_message: `YouTube upload failed: ${(err as Error).message}` });

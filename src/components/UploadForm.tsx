@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -19,7 +20,22 @@ import {
   Calendar,
   Zap,
   Youtube,
+  Timer,
 } from 'lucide-react';
+
+// Schedule interval options (in hours)
+const SCHEDULE_INTERVALS = [
+  { value: '1', label: '1 hour' },
+  { value: '2', label: '2 hours' },
+  { value: '4', label: '4 hours' },
+  { value: '6', label: '6 hours' },
+  { value: '12', label: '12 hours' },
+  { value: '24', label: '1 day' },
+  { value: '48', label: '2 days' },
+  { value: '72', label: '3 days' },
+  { value: '168', label: '1 week' },
+  { value: '720', label: '1 month' },
+];
 
 interface UploadFormProps {
   onSuccess?: () => void;
@@ -39,6 +55,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
   const [useManualSchedule, setUseManualSchedule] = useState(false);
   const [manualDate, setManualDate] = useState('');
   const [manualTime, setManualTime] = useState('');
+  const [scheduleInterval, setScheduleInterval] = useState('4');
 
   const detectSourceType = (url: string): 'youtube' | 'instagram' | null => {
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
@@ -186,6 +203,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
           channel_id: channel.id,
           manual_schedule_time: manualScheduleTime,
           duration_seconds: resolvedMetadata?.duration_seconds || null,
+          schedule_interval_hours: useManualSchedule ? null : parseInt(scheduleInterval, 10),
         },
         headers: {
           Authorization: `Bearer ${session.access_token}`,
@@ -366,7 +384,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
               <div>
                 <p className="font-medium text-foreground">Auto-schedule</p>
                 <p className="text-sm text-muted-foreground">
-                  Publishes immediately or 4 hours after last scheduled video
+                  Publishes immediately or spaced after last scheduled video
                 </p>
               </div>
             </div>
@@ -375,6 +393,30 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
               onCheckedChange={(checked) => setUseManualSchedule(!checked)}
             />
           </div>
+
+          {!useManualSchedule && (
+            <div className="space-y-2 animate-slide-up">
+              <Label className="text-foreground flex items-center gap-2">
+                <Timer className="w-4 h-4 text-muted-foreground" />
+                Schedule Interval
+              </Label>
+              <Select value={scheduleInterval} onValueChange={setScheduleInterval}>
+                <SelectTrigger className="bg-input border-border text-foreground">
+                  <SelectValue placeholder="Select interval" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHEDULE_INTERVALS.map((interval) => (
+                    <SelectItem key={interval.value} value={interval.value}>
+                      {interval.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Each new video will be scheduled this far apart from the previous one
+              </p>
+            </div>
+          )}
 
           {useManualSchedule && (
             <div className="grid grid-cols-2 gap-4 animate-slide-up">

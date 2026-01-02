@@ -51,6 +51,7 @@ serve(async (req) => {
       video_id,
       retry,
       duration_seconds,
+      schedule_interval_hours,
     } = body;
 
     if (!source_url || !source_type) {
@@ -60,25 +61,33 @@ serve(async (req) => {
       });
     }
 
+    // Schedule interval in hours (default 4 hours, can be 1, 2, 4, 6, 12, 24, 48, 168, 720)
+    const intervalHours = typeof schedule_interval_hours === "number" && schedule_interval_hours > 0 
+      ? schedule_interval_hours 
+      : 4;
+
     // Calculate scheduled time using automatic scheduling logic
     let scheduledPublishAt: string | null = null;
 
     if (manual_schedule_time) {
       scheduledPublishAt = manual_schedule_time;
     } else {
+      // Find the latest scheduled video (scheduled or processing states)
       const { data: scheduledVideos } = await supabase
         .from("videos")
         .select("scheduled_publish_at")
         .eq("user_id", user.id)
-        .eq("status", "scheduled")
+        .in("status", ["scheduled", "pending_download", "downloading", "processing", "uploading"])
+        .not("scheduled_publish_at", "is", null)
         .order("scheduled_publish_at", { ascending: false })
         .limit(1);
 
       if (scheduledVideos && scheduledVideos.length > 0 && scheduledVideos[0].scheduled_publish_at) {
         const latestTime = new Date(scheduledVideos[0].scheduled_publish_at);
-        scheduledPublishAt = new Date(latestTime.getTime() + 4 * 60 * 60 * 1000).toISOString();
-        console.log("Auto-scheduling 4 hours after:", latestTime.toISOString());
+        scheduledPublishAt = new Date(latestTime.getTime() + intervalHours * 60 * 60 * 1000).toISOString();
+        console.log(`Auto-scheduling ${intervalHours} hours after:`, latestTime.toISOString());
       }
+      // If no scheduled videos exist, scheduledPublishAt remains null = immediate publish
     }
 
     const isShort =
