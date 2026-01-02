@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -12,7 +13,22 @@ import {
   Link2,
   Youtube,
   ListPlus,
+  Timer,
 } from 'lucide-react';
+
+// Schedule interval options (in hours)
+const SCHEDULE_INTERVALS = [
+  { value: '1', label: '1 hour' },
+  { value: '2', label: '2 hours' },
+  { value: '4', label: '4 hours' },
+  { value: '6', label: '6 hours' },
+  { value: '12', label: '12 hours' },
+  { value: '24', label: '1 day' },
+  { value: '48', label: '2 days' },
+  { value: '72', label: '3 days' },
+  { value: '168', label: '1 week' },
+  { value: '720', label: '1 month' },
+];
 
 interface BatchUploadFormProps {
   onSuccess?: () => void;
@@ -26,6 +42,7 @@ export function BatchUploadForm({ onSuccess }: BatchUploadFormProps) {
   const [urlsText, setUrlsText] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [scheduleInterval, setScheduleInterval] = useState('4');
 
   const detectSourceType = (url: string): 'youtube' | 'instagram' | null => {
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
@@ -96,7 +113,7 @@ export function BatchUploadForm({ onSuccess }: BatchUploadFormProps) {
             source_url: url,
             source_type: sourceType,
             channel_id: channel.id,
-            // Auto-schedule will be handled by process-video
+            schedule_interval_hours: parseInt(scheduleInterval, 10),
           },
           headers: {
             Authorization: `Bearer ${session?.access_token}`,
@@ -198,11 +215,26 @@ export function BatchUploadForm({ onSuccess }: BatchUploadFormProps) {
         </div>
       )}
 
-      {/* Info Box */}
-      <div className="glass-card p-4 bg-primary/5 border-primary/20">
-        <p className="text-sm text-muted-foreground">
-          <strong className="text-foreground">Auto-scheduling:</strong> Videos will be automatically scheduled 4 hours apart, 
-          starting immediately if no videos are currently scheduled.
+      {/* Schedule Interval */}
+      <div className="glass-card p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+          <Timer className="w-5 h-5 text-primary" />
+          Schedule Interval
+        </h3>
+        <Select value={scheduleInterval} onValueChange={setScheduleInterval}>
+          <SelectTrigger className="bg-input border-border text-foreground">
+            <SelectValue placeholder="Select interval" />
+          </SelectTrigger>
+          <SelectContent>
+            {SCHEDULE_INTERVALS.map((interval) => (
+              <SelectItem key={interval.value} value={interval.value}>
+                {interval.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground mt-2">
+          Videos will be automatically spaced apart by this interval
         </p>
       </div>
 
