@@ -145,14 +145,18 @@ async function tryAcquireLock(channelId: string, videoId: string): Promise<boole
 }
 
 /**
- * Releases the lock and sets next_allowed_upload_at with random delay (7-15 min)
+ * Releases the lock and sets next_allowed_upload_at to a specific time.
  */
-async function releaseLock(channelId: string, videoId: string): Promise<void> {
+async function releaseLockWithNextAllowed(
+  channelId: string,
+  videoId: string,
+  nextAllowed: Date
+): Promise<void> {
   const now = new Date();
-  const delayMs = randomDelayMs();
-  const nextAllowed = new Date(now.getTime() + delayMs);
 
-  console.log(`Releasing lock for channel ${channelId}, next upload allowed at ${nextAllowed.toISOString()} (${Math.round(delayMs / 60000)} min delay)`);
+  console.log(
+    `Releasing lock for channel ${channelId}, next upload allowed at ${nextAllowed.toISOString()}`
+  );
 
   const { error } = await supabase
     .from("channel_upload_locks")
@@ -167,6 +171,20 @@ async function releaseLock(channelId: string, videoId: string): Promise<void> {
   if (error) {
     console.warn("Failed to release lock:", error);
   }
+}
+
+/**
+ * Releases the lock and sets next_allowed_upload_at with random delay (7-15 min)
+ */
+async function releaseLock(channelId: string, videoId: string): Promise<void> {
+  const delayMs = randomDelayMs();
+  const nextAllowed = new Date(Date.now() + delayMs);
+
+  console.log(
+    `Applying normal cooldown: ${Math.round(delayMs / 60000)} min delay`
+  );
+
+  await releaseLockWithNextAllowed(channelId, videoId, nextAllowed);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -418,20 +436,22 @@ async function processVideo(videoId: string) {
   }
 
   // Upload to YouTube
+  let uploadHitLimitExceeded = false;
+
   try {
     // Robust title sanitization
     let rawTitle = ((video.title as string) || "").trim();
     rawTitle = rawTitle.replace(/[\u200B-\u200D\uFEFF\u0000-\u001F\u007F-\u009F]/g, "");
     let sanitizedTitle = rawTitle.length > 0 ? rawTitle : `Video ${videoId.substring(0, 8)}`;
-    
+
     const maxLength = Boolean(video.is_short) ? 91 : 100;
     if (sanitizedTitle.length > maxLength) {
       sanitizedTitle = sanitizedTitle.substring(0, maxLength - 3) + "...";
     }
-    
+
     console.log("Final title for YouTube:", sanitizedTitle, "Length:", sanitizedTitle.length);
     console.log("Scheduled publish at:", scheduledAt || "immediate");
-    
+
     const youtubeVideoId = await uploadToYouTube(accessToken, videoBuffer, {
       title: sanitizedTitle,
       description: (video.description as string) || "",
@@ -461,11 +481,31 @@ async function processVideo(videoId: string) {
       console.log("Video published immediately:", youtubeVideoId);
     }
   } catch (err) {
+    const msg = (err as Error)?.message || String(err);
+
+    uploadHitLimitExceeded =
+      msg.includes("uploadLimitExceeded") ||
+      msg.includes("exceeded the number of videos") ||
+      msg.includes("The user has exceeded the number of videos");
+
     console.error("YouTube upload failed:", err);
-    await updateVideoStatus(videoId, "failed", { error_message: `YouTube upload failed: ${(err as Error).message}` });
+    await updateVideoStatus(videoId, "failed", {
+      error_message: `YouTube upload failed: ${msg}`,
+    });
   } finally {
-    // Always release lock with delay for next upload
-    await releaseLock(resolvedChannelId, videoId);
+    // Always release lock.
+    // If YouTube says uploadLimitExceeded, it's an account/platform limit (not speed).
+    // We pause the entire channel longer to prevent endless retries.
+    if (uploadHitLimitExceeded) {
+      const cooldownHours = 24;
+      const nextAllowed = new Date(Date.now() + cooldownHours * 60 * 60 * 1000);
+      console.log(
+        `uploadLimitExceeded detected; applying extended cooldown: ${cooldownHours}h`
+      );
+      await releaseLockWithNextAllowed(resolvedChannelId, videoId, nextAllowed);
+    } else {
+      await releaseLock(resolvedChannelId, videoId);
+    }
   }
 }
 
