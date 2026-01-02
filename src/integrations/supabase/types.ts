@@ -47,6 +47,33 @@ export type Database = {
         }
         Relationships: []
       }
+      channel_upload_locks: {
+        Row: {
+          channel_id: string
+          lock_acquired_at: string
+          locked_by_video_id: string | null
+          locked_until: string
+          next_allowed_upload_at: string
+          updated_at: string
+        }
+        Insert: {
+          channel_id: string
+          lock_acquired_at?: string
+          locked_by_video_id?: string | null
+          locked_until?: string
+          next_allowed_upload_at?: string
+          updated_at?: string
+        }
+        Update: {
+          channel_id?: string
+          lock_acquired_at?: string
+          locked_by_video_id?: string | null
+          locked_until?: string
+          next_allowed_upload_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
