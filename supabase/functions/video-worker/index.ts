@@ -349,7 +349,10 @@ async function processVideo(videoId: string) {
   const isScheduledForFuture = scheduledTime && scheduledTime > now + 60_000;
 
   if (isScheduledForFuture) {
-    console.log(`Video ${videoId} is scheduled for ${scheduledAt}, will use YouTube's scheduled publish`);
+    // Video is scheduled for the future - don't upload yet, mark as 'scheduled'
+    console.log(`Video ${videoId} is scheduled for ${scheduledAt} (future), marking as 'scheduled' for CRON pickup`);
+    await updateVideoStatus(videoId, "scheduled");
+    return;
   }
 
   // Check if video file exists in storage
@@ -388,8 +391,9 @@ async function processVideo(videoId: string) {
   const lockAcquired = await tryAcquireLock(resolvedChannelId, videoId);
   
   if (!lockAcquired) {
-    console.log(`Cannot process video ${videoId} now - channel ${resolvedChannelId} is rate-limited or locked. Keeping in 'processing' status for retry.`);
-    // Keep status as processing - local runner or scheduler will retry later
+    console.log(`Cannot process video ${videoId} now - channel ${resolvedChannelId} is rate-limited or locked. Reverting to 'scheduled' for CRON retry.`);
+    // Revert to 'scheduled' status so CRON will pick it up again later
+    await updateVideoStatus(videoId, "scheduled");
     return;
   }
 
