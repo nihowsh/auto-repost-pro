@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useVideos } from '@/hooks/useVideos';
+import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { VideoCard } from './VideoCard';
 import { UploadForm } from './UploadForm';
 import { BatchUploadForm } from './BatchUploadForm';
 import { ChannelScraperForm } from './ChannelScraperForm';
 import { ApiKeyManager } from './ApiKeyManager';
+import { ChannelScheduleInfo } from './ChannelScheduleInfo';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -41,6 +43,7 @@ export function Dashboard() {
     deleteVideo,
     deleteQueueVideos,
   } = useVideos();
+  const { channels } = useYouTubeChannel();
   const [activeTab, setActiveTab] = useState('upload');
   const [uploadMode, setUploadMode] = useState<'single' | 'batch' | 'scraper'>('single');
   const [confirmClearQueueOpen, setConfirmClearQueueOpen] = useState(false);
@@ -73,6 +76,9 @@ export function Dashboard() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
+      {/* Channel Schedule Info */}
+      <ChannelScheduleInfo channels={channels} />
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="grid w-full grid-cols-6 bg-card border border-border rounded-xl p-1 h-auto">
           {tabs.map((tab) => (
@@ -157,6 +163,7 @@ export function Dashboard() {
             emptyMessage="No videos in queue"
             emptyDescription="Upload a video to get started"
             onDelete={deleteVideo}
+            onUpdate={refetchVideos}
           />
 
           <AlertDialog open={confirmClearQueueOpen} onOpenChange={setConfirmClearQueueOpen}>
@@ -178,12 +185,21 @@ export function Dashboard() {
         </TabsContent>
 
         <TabsContent value="scheduled" className="animate-fade-in">
+          <div className="glass-card p-4 mb-4 bg-primary/5 border-primary/20">
+            <p className="text-sm text-muted-foreground">
+              <Clock className="w-4 h-4 inline mr-2" />
+              Videos below will be automatically uploaded to YouTube when their scheduled time arrives. 
+              The system checks every 5 minutes.
+            </p>
+          </div>
           <VideoList
             videos={scheduledVideos}
             loading={loading}
             emptyMessage="No scheduled videos"
             emptyDescription="Videos will appear here after processing"
             onDelete={deleteVideo}
+            onUpdate={refetchVideos}
+            showCountdown
           />
         </TabsContent>
 
@@ -194,6 +210,7 @@ export function Dashboard() {
             emptyMessage="No published videos"
             emptyDescription="Your published videos will appear here"
             onDelete={deleteVideo}
+            onUpdate={refetchVideos}
           />
         </TabsContent>
 
@@ -204,6 +221,7 @@ export function Dashboard() {
             emptyMessage="No failed uploads"
             emptyDescription="Failed uploads will appear here for retry"
             onDelete={deleteVideo}
+            onUpdate={refetchVideos}
           />
         </TabsContent>
 
@@ -221,9 +239,19 @@ interface VideoListProps {
   emptyMessage: string;
   emptyDescription: string;
   onDelete?: (videoId: string) => Promise<void>;
+  onUpdate?: () => void;
+  showCountdown?: boolean;
 }
 
-function VideoList({ videos, loading, emptyMessage, emptyDescription, onDelete }: VideoListProps) {
+function VideoList({ 
+  videos, 
+  loading, 
+  emptyMessage, 
+  emptyDescription, 
+  onDelete,
+  onUpdate,
+  showCountdown = false,
+}: VideoListProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -247,7 +275,13 @@ function VideoList({ videos, loading, emptyMessage, emptyDescription, onDelete }
   return (
     <div className="grid gap-4">
       {videos.map((video) => (
-        <VideoCard key={video.id} video={video} onDelete={onDelete} />
+        <VideoCard 
+          key={video.id} 
+          video={video} 
+          onDelete={onDelete} 
+          onUpdate={onUpdate}
+          showCountdown={showCountdown}
+        />
       ))}
     </div>
   );
