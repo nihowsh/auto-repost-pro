@@ -72,8 +72,8 @@ serve(async (req) => {
     if (manual_schedule_time) {
       scheduledPublishAt = manual_schedule_time;
     } else {
-      // Find the latest scheduled video (scheduled or processing states)
-      const { data: scheduledVideos } = await supabase
+      // Find the latest scheduled video FOR THIS CHANNEL ONLY (independent per-channel scheduling)
+      let query = supabase
         .from("videos")
         .select("scheduled_publish_at")
         .eq("user_id", user.id)
@@ -82,14 +82,21 @@ serve(async (req) => {
         .order("scheduled_publish_at", { ascending: false })
         .limit(1);
 
+      // Filter by channel_id if provided for per-channel independent scheduling
+      if (channel_id) {
+        query = query.eq("channel_id", channel_id);
+      }
+
+      const { data: scheduledVideos } = await query;
+
       if (scheduledVideos && scheduledVideos.length > 0 && scheduledVideos[0].scheduled_publish_at) {
         const latestTime = new Date(scheduledVideos[0].scheduled_publish_at);
         scheduledPublishAt = new Date(latestTime.getTime() + intervalHours * 60 * 60 * 1000).toISOString();
-        console.log(`Auto-scheduling ${intervalHours} hours after:`, latestTime.toISOString());
+        console.log(`Auto-scheduling ${intervalHours} hours after:`, latestTime.toISOString(), "for channel:", channel_id);
       } else {
-        // No scheduled videos exist - schedule from NOW + interval
+        // No scheduled videos exist for this channel - schedule from NOW + interval
         scheduledPublishAt = new Date(Date.now() + intervalHours * 60 * 60 * 1000).toISOString();
-        console.log(`First video in queue - scheduling ${intervalHours} hours from now:`, scheduledPublishAt);
+        console.log(`First video for channel ${channel_id} - scheduling ${intervalHours} hours from now:`, scheduledPublishAt);
       }
     }
 

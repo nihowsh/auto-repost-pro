@@ -331,11 +331,12 @@ serve(async (req) => {
       });
     }
 
-    // Calculate scheduled times based on existing queue
+    // Calculate scheduled times based on existing queue FOR THIS CHANNEL ONLY
     const { data: scheduledVideos } = await supabase
       .from("videos")
       .select("scheduled_publish_at")
       .eq("user_id", user.id)
+      .eq("channel_id", channel_id) // Filter by target channel for independent scheduling
       .in("status", ["scheduled", "pending_download", "downloading", "processing", "uploading"])
       .not("scheduled_publish_at", "is", null)
       .order("scheduled_publish_at", { ascending: false })
