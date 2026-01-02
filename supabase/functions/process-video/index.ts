@@ -86,8 +86,11 @@ serve(async (req) => {
         const latestTime = new Date(scheduledVideos[0].scheduled_publish_at);
         scheduledPublishAt = new Date(latestTime.getTime() + intervalHours * 60 * 60 * 1000).toISOString();
         console.log(`Auto-scheduling ${intervalHours} hours after:`, latestTime.toISOString());
+      } else {
+        // No scheduled videos exist - schedule from NOW + interval
+        scheduledPublishAt = new Date(Date.now() + intervalHours * 60 * 60 * 1000).toISOString();
+        console.log(`First video in queue - scheduling ${intervalHours} hours from now:`, scheduledPublishAt);
       }
-      // If no scheduled videos exist, scheduledPublishAt remains null = immediate publish
     }
 
     const isShort =
