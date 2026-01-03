@@ -349,8 +349,35 @@ serve(async (req) => {
       baseTime = new Date();
     }
 
+    // Check for existing videos with same source_url to prevent duplicates
+    const candidateUrls = shorts.map(s => `https://youtube.com/shorts/${s.videoId}`);
+    
+    const { data: existingVideos } = await supabase
+      .from("videos")
+      .select("source_url")
+      .eq("user_id", user.id)
+      .in("source_url", candidateUrls);
+
+    const existingUrls = new Set((existingVideos || []).map(v => v.source_url));
+    console.log(`Found ${existingUrls.size} existing videos to skip`);
+
+    // Filter out already-queued videos
+    const newShorts = shorts.filter(s => !existingUrls.has(`https://youtube.com/shorts/${s.videoId}`));
+    
+    if (newShorts.length === 0) {
+      return new Response(JSON.stringify({ 
+        success: true, 
+        videos_queued: 0,
+        message: "All videos already queued or published" 
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    console.log(`Queuing ${newShorts.length} new videos (skipped ${shorts.length - newShorts.length} duplicates)`);
+
     // Create video records with unique URLs and metadata
-    const videoRecords = shorts.map((short, index) => ({
+    const videoRecords = newShorts.map((short, index) => ({
       user_id: user.id,
       channel_id: channel_id,
       source_url: `https://youtube.com/shorts/${short.videoId}`,
