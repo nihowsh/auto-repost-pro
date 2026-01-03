@@ -112,15 +112,20 @@ serve(async (req) => {
 
     // Handle retry (re-queue for local runner; do NOT trigger cloud worker yet)
     if (retry && video_id) {
+      // IMPORTANT: Clear video_file_path to force local runner to re-download
       const { error } = await supabase
         .from("videos")
-        .update({ status: initialStatus, error_message: initialErrorMessage })
+        .update({ 
+          status: initialStatus, 
+          error_message: initialErrorMessage,
+          video_file_path: null,  // Force re-download
+        })
         .eq("id", video_id)
         .eq("user_id", user.id);
 
       if (error) throw error;
 
-      console.log("Video re-queued for local runner:", video_id);
+      console.log("Video re-queued for local runner (file path cleared):", video_id);
       return new Response(JSON.stringify({ success: true, video_id }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

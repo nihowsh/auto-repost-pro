@@ -477,10 +477,26 @@ async function supabaseRequest(endpoint, options = {}) {
 }
 
 async function fetchPendingVideos() {
-  const videos = await supabaseRequest(
+  // Fetch BOTH pending_download AND stuck downloading videos
+  // Videos stuck in 'downloading' for > 5 minutes are considered abandoned (runner restart)
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  
+  const pendingVideos = await supabaseRequest(
     \`videos?user_id=eq.\${userId}&status=eq.pending_download&select=*\`
   );
-  return videos;
+  
+  const stuckVideos = await supabaseRequest(
+    \`videos?user_id=eq.\${userId}&status=eq.downloading&updated_at=lt.\${fiveMinutesAgo}&select=*\`
+  );
+  
+  // Combine and deduplicate by ID
+  const allVideos = [...pendingVideos, ...stuckVideos];
+  const seen = new Set();
+  return allVideos.filter(v => {
+    if (seen.has(v.id)) return false;
+    seen.add(v.id);
+    return true;
+  });
 }
 
 async function updateVideoStatus(videoId, status, extra = {}) {
@@ -893,10 +909,9 @@ async function processVideo(video) {
   console.log('');
   console.log('🎬 Processing: ' + (video.title || video.id));
   
+  // NOTE: Status already set to 'downloading' in pollForVideos - no need to set again
+  
   try {
-    // Update status to downloading
-    await updateVideoStatus(video.id, 'downloading');
-    
     // Download the video
     const filePath = await downloadVideo(video);
     
