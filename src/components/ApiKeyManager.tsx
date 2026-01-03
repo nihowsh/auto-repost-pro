@@ -397,7 +397,7 @@ function loadEnv() {
     const envPath = path.join(process.cwd(), '.env');
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, 'utf8');
-      envContent.split(/\r?\n/).forEach(line => {
+      envContent.split(/\\r?\\n/).forEach(line => {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) return;
 
@@ -506,27 +506,27 @@ async function updateVideoFields(videoId, fields = {}) {
 // Check if URL is a channel/playlist URL that needs video extraction
 function isChannelOrPlaylistUrl(url) {
   const channelPatterns = [
-    /youtube\\.com\\/@[^/]+/,
-    /youtube\\.com\\/channel\\//,
-    /youtube\\.com\\/c\\//,
-    /youtube\\.com\\/user\\//,
-    /youtube\\.com\\/playlist\\?list=/,
-    /instagram\\.com\\/[^/]+(\\/reels)?\\/?$/,  // Instagram profiles
+    /youtube\\\\.com\\\\/@[^/]+/,
+    /youtube\\\\.com\\\\/channel\\\\//,
+    /youtube\\\\.com\\\\/c\\\\//,
+    /youtube\\\\.com\\\\/user\\\\//,
+    /youtube\\\\.com\\\\/playlist\\\\?list=/,
+    /instagram\\\\.com\\\\/[^/]+(\\\\/reels)?\\\\/?$/,  // Instagram profiles
   ];
   return channelPatterns.some(pattern => pattern.test(url));
 }
 
 // Check if URL is specifically a YouTube Shorts feed
 function isYouTubeShortsFeedUrl(url) {
-  return /youtube\\.com\\/@[^/]+\\/shorts/.test(url) || 
-         /youtube\\.com\\/channel\\/[^/]+\\/shorts/.test(url);
+  return /youtube\\\\.com\\\\/@[^/]+\\\\/shorts/.test(url) || 
+         /youtube\\\\.com\\\\/channel\\\\/[^/]+\\\\/shorts/.test(url);
 }
 
 // Check if URL is an Instagram profile or Reels feed
 function isInstagramProfileUrl(url) {
   // Matches: instagram.com/username, instagram.com/username/, instagram.com/username/reels
-  return /instagram\\.com\\/[^/]+(\\/reels)?\\/?$/.test(url) ||
-         /instagram\\.com\\/[^/]+\\/reels\\/?/.test(url);
+  return /instagram\\\\.com\\\\/[^/]+(\\\\/reels)?\\\\/?$/.test(url) ||
+         /instagram\\\\.com\\\\/[^/]+\\\\/reels\\\\/?/.test(url);
 }
 
 // Parse scrape parameters from source_url (format: url#limit=N#index=M)
@@ -535,12 +535,12 @@ function parseScrapeParams(sourceUrl) {
   let limit = 10;
   let index = 0;
   
-  const limitMatch = sourceUrl.match(/#limit=(\\d+)/);
+  const limitMatch = sourceUrl.match(/#limit=(\\\\d+)/);
   if (limitMatch) {
     limit = parseInt(limitMatch[1], 10);
   }
   
-  const indexMatch = sourceUrl.match(/#index=(\\d+)/);
+  const indexMatch = sourceUrl.match(/#index=(\\\\d+)/);
   if (indexMatch) {
     index = parseInt(indexMatch[1], 10);
   }
@@ -616,7 +616,7 @@ async function extractShortsCandidateIds(feedUrl, sampleSize) {
     });
     
     // DEDUPLICATE: yt-dlp can return the same ID multiple times for Shorts feeds
-    const rawIds = result.trim().split('\\n').map(id => id.trim()).filter(id => id && id.length > 0);
+    const rawIds = result.trim().split('\\\\n').map(id => id.trim()).filter(id => id && id.length > 0);
     const uniqueIds = [...new Set(rawIds)];
     
     console.log(\`✅ Extracted \${uniqueIds.length} unique candidate video IDs (from \${rawIds.length} raw)\`);
@@ -635,7 +635,7 @@ async function extractInstagramReelIds(profileUrl, sampleSize) {
   // Normalize URL to reels tab if not already
   let reelsUrl = profileUrl;
   if (!reelsUrl.includes('/reels')) {
-    reelsUrl = reelsUrl.replace(/\\/?$/, '/reels/');
+    reelsUrl = reelsUrl.replace(/\\\\/?$/, '/reels/');
   }
   
   console.log(\`📸 Extracting candidate Reel IDs from Instagram (fetching \${fetchLimit} for sampling \${sampleSize})...\`);
@@ -656,7 +656,7 @@ async function extractInstagramReelIds(profileUrl, sampleSize) {
     });
     
     // DEDUPLICATE: yt-dlp can return duplicates
-    const rawIds = result.trim().split('\\n').map(id => id.trim()).filter(id => id && id.length > 0);
+    const rawIds = result.trim().split('\\\\n').map(id => id.trim()).filter(id => id && id.length > 0);
     const uniqueIds = [...new Set(rawIds)];
     
     console.log(\`✅ Extracted \${uniqueIds.length} unique candidate Reel IDs (from \${rawIds.length} raw)\`);
@@ -688,7 +688,7 @@ async function extractVideoUrls(channelUrl, limit = 10) {
     });
     
     // DEDUPLICATE URLs
-    const rawUrls = result.trim().split('\\n').filter(url => url.startsWith('http'));
+    const rawUrls = result.trim().split('\\\\n').filter(url => url.startsWith('http'));
     const uniqueUrls = [...new Set(rawUrls)];
     
     console.log(\`✅ Extracted \${uniqueUrls.length} unique video URLs\`);
@@ -778,7 +778,7 @@ async function getTitleFromUrl(url) {
       maxBuffer: 5 * 1024 * 1024,
     });
 
-    const title = String(result || '').trim().split('\n')[0]?.trim();
+    const title = String(result || '').trim().split('\\n')[0]?.trim();
     return title && title.length > 0 ? title : null;
   } catch {
     return null;
@@ -970,7 +970,7 @@ async function pollForVideos() {
     const videos = await fetchPendingVideos();
     
     if (videos.length > 0) {
-      console.log(\`\\n📋 Found \${videos.length} video(s) to process\`);
+      console.log(\`\\\\n📋 Found \${videos.length} video(s) to process\`);
       
       // CRITICAL: Mark ALL videos as downloading IMMEDIATELY to prevent race conditions
       // This ensures no other poll can pick up the same videos
@@ -998,8 +998,8 @@ async function main() {
   try {
     await authenticate();
     
-    console.log(\`\\n⏳ Polling for videos every \${POLL_INTERVAL / 1000} seconds...\`);
-    console.log('Press Ctrl+C to stop\\n');
+    console.log(\`\\\\n⏳ Polling for videos every \${POLL_INTERVAL / 1000} seconds...\`);
+    console.log('Press Ctrl+C to stop\\\\n');
     
     // Initial poll
     await pollForVideos();
