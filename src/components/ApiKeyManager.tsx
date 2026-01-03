@@ -930,19 +930,40 @@ async function processVideo(video) {
   }
 }
 
+// Polling lock to prevent overlapping polls
+let isPolling = false;
+
 async function pollForVideos() {
+  // Prevent overlapping polls - this is the critical fix for duplicate downloads
+  if (isPolling) {
+    console.log('⏸️  Previous poll still running, skipping...');
+    return;
+  }
+  
+  isPolling = true;
+  
   try {
     const videos = await fetchPendingVideos();
     
     if (videos.length > 0) {
       console.log(\`\\n📋 Found \${videos.length} video(s) to process\`);
       
+      // CRITICAL: Mark ALL videos as downloading IMMEDIATELY to prevent race conditions
+      // This ensures no other poll can pick up the same videos
+      for (const video of videos) {
+        await updateVideoStatus(video.id, 'downloading');
+        console.log(\`🔒 Locked video: \${video.title || video.id}\`);
+      }
+      
+      // Now process them one by one
       for (const video of videos) {
         await processVideo(video);
       }
     }
   } catch (error) {
     console.error('Polling error:', error.message);
+  } finally {
+    isPolling = false;
   }
 }
 
