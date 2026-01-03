@@ -74,13 +74,14 @@ async function publishDueVideos() {
         .update({ status: "uploading" })
         .eq("id", video.id);
 
-      // Trigger video-worker
+      // Trigger video-worker using service role key for proper auth
       const workerUrl = `${SUPABASE_URL}/functions/v1/video-worker`;
       const response = await fetch(workerUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         },
         body: JSON.stringify({ video_id: video.id }),
       });

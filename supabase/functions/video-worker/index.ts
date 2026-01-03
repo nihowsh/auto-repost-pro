@@ -339,6 +339,13 @@ async function processVideo(videoId: string) {
     return;
   }
 
+  // GUARD: Prevent duplicate processing - only process if status is uploading or processing
+  const currentStatus = video.status as string;
+  if (!["uploading", "processing", "scheduled"].includes(currentStatus)) {
+    console.log(`Video ${videoId} has status '${currentStatus}', skipping to prevent duplicate processing`);
+    return;
+  }
+
   const userId = video.user_id as string;
   const videoFilePath = video.video_file_path as string | null;
   const scheduledAt = (video.scheduled_publish_at as string | null) ?? null;

@@ -477,26 +477,16 @@ async function supabaseRequest(endpoint, options = {}) {
 }
 
 async function fetchPendingVideos() {
-  // Fetch BOTH pending_download AND stuck downloading videos
-  // Videos stuck in 'downloading' for > 5 minutes are considered abandoned (runner restart)
+  // Fetch pending_download videos OR stuck downloading videos (>5 min old)
+  // Using OR query: status=pending_download OR (status=downloading AND updated_at < 5min ago)
   const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   
-  const pendingVideos = await supabaseRequest(
-    \`videos?user_id=eq.\${userId}&status=eq.pending_download&select=*\`
+  // Use PostgREST OR syntax for single efficient query
+  const videos = await supabaseRequest(
+    \`videos?user_id=eq.\${userId}&or=(status.eq.pending_download,and(status.eq.downloading,updated_at.lt.\${fiveMinutesAgo}))&select=*&order=created_at.asc\`
   );
   
-  const stuckVideos = await supabaseRequest(
-    \`videos?user_id=eq.\${userId}&status=eq.downloading&updated_at=lt.\${fiveMinutesAgo}&select=*\`
-  );
-  
-  // Combine and deduplicate by ID
-  const allVideos = [...pendingVideos, ...stuckVideos];
-  const seen = new Set();
-  return allVideos.filter(v => {
-    if (seen.has(v.id)) return false;
-    seen.add(v.id);
-    return true;
-  });
+  return videos;
 }
 
 async function updateVideoStatus(videoId, status, extra = {}) {
@@ -582,8 +572,26 @@ function toInstagramReelUrl(shortcode) {
 }
 
 // Cache for extracted + sampled video URLs per channel
-// Key: baseUrl, Value: array of resolved individual video URLs
+// Key: baseUrl, Value: { urls: string[], timestamp: number }
+// Cache expires after 10 minutes to prevent stale data across restarts
 const scrapeSelectionCache = new Map();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function getCachedUrls(baseUrl) {
+  const cached = scrapeSelectionCache.get(baseUrl);
+  if (!cached) return null;
+  
+  // Check if cache is expired
+  if (Date.now() - cached.timestamp > CACHE_TTL_MS) {
+    scrapeSelectionCache.delete(baseUrl);
+    return null;
+  }
+  return cached.urls;
+}
+
+function setCachedUrls(baseUrl, urls) {
+  scrapeSelectionCache.set(baseUrl, { urls, timestamp: Date.now() });
+}
 
 // Extract video IDs from a Shorts feed (used ONLY for ID extraction, never for download)
 async function extractShortsCandidateIds(feedUrl, sampleSize) {
@@ -696,8 +704,10 @@ async function extractVideoUrls(channelUrl, limit = 10) {
 async function resolveScrapeVideoUrl(sourceUrl) {
   const { baseUrl, limit, index } = parseScrapeParams(sourceUrl);
   
-  // Check cache first
-  if (!scrapeSelectionCache.has(baseUrl)) {
+  // Check cache first (with TTL expiration)
+  let cachedUrls = getCachedUrls(baseUrl);
+  
+  if (!cachedUrls) {
     let selectedUrls;
     
     if (isYouTubeShortsFeedUrl(baseUrl)) {
@@ -741,11 +751,10 @@ async function resolveScrapeVideoUrl(sourceUrl) {
       throw new Error('No videos found in channel/playlist');
     }
     
-    scrapeSelectionCache.set(baseUrl, selectedUrls);
-    console.log(\`📦 Cached \${selectedUrls.length} video URLs for this batch\`);
+    setCachedUrls(baseUrl, selectedUrls);
+    console.log(\`📦 Cached \${selectedUrls.length} video URLs for this batch (TTL: 10min)\`);
+    cachedUrls = selectedUrls;
   }
-  
-  const cachedUrls = scrapeSelectionCache.get(baseUrl);
   
   if (index >= cachedUrls.length) {
     throw new Error(\`Video index \${index} out of range (only \${cachedUrls.length} videos available)\`);
