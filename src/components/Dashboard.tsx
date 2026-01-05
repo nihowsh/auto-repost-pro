@@ -8,6 +8,7 @@ import { BatchUploadForm } from './BatchUploadForm';
 import { ChannelScraperForm } from './ChannelScraperForm';
 import { ApiKeyManager } from './ApiKeyManager';
 import { ChannelScheduleInfo } from './ChannelScheduleInfo';
+import { LongFormCreator } from './LongFormCreator';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -30,6 +31,7 @@ import {
   Users,
   Terminal,
   Trash2,
+  Film,
 } from 'lucide-react';
 
 export function Dashboard() {
@@ -58,6 +60,7 @@ export function Dashboard() {
 
   const tabs = [
     { id: 'upload', label: 'Upload', icon: Upload, count: null },
+    { id: 'create', label: 'Create', icon: Film, count: null },
     { id: 'queue', label: 'Queue', icon: ListVideo, count: queueVideos.length },
     { id: 'scheduled', label: 'Scheduled', icon: Clock, count: scheduledVideos.length },
     { id: 'published', label: 'Published', icon: CheckCircle, count: publishedVideos.length },
@@ -87,7 +90,7 @@ export function Dashboard() {
       <ChannelScheduleInfo channels={channels} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-6 bg-card border border-border rounded-xl p-1 h-auto">
+        <TabsList className="grid w-full grid-cols-7 bg-card border border-border rounded-xl p-1 h-auto">
           {tabs.map((tab) => (
             <TabsTrigger
               key={tab.id}
@@ -149,6 +152,10 @@ export function Dashboard() {
               }}
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="create" className="animate-fade-in">
+          <LongFormCreator />
         </TabsContent>
 
         <TabsContent value="queue" className="animate-fade-in space-y-4">

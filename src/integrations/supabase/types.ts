@@ -74,6 +74,113 @@ export type Database = {
         }
         Relationships: []
       }
+      long_form_projects: {
+        Row: {
+          background_music_category: string | null
+          background_music_source: string | null
+          background_music_url: string | null
+          brief_description: string | null
+          channel_id: string | null
+          clips_metadata: Json | null
+          created_at: string
+          error_message: string | null
+          final_video_path: string | null
+          id: string
+          processing_progress: number | null
+          published_at: string | null
+          reference_urls: Json
+          scheduled_publish_at: string | null
+          scheduling_delay: number | null
+          scheduling_mode: string | null
+          script: string | null
+          script_source: string | null
+          status: string
+          target_duration_seconds: number
+          thumbnail_path: string | null
+          topic: string
+          updated_at: string
+          user_id: string
+          voiceover_path: string | null
+          youtube_chapters: Json | null
+          youtube_description: string | null
+          youtube_tags: string[] | null
+          youtube_title: string | null
+          youtube_video_id: string | null
+        }
+        Insert: {
+          background_music_category?: string | null
+          background_music_source?: string | null
+          background_music_url?: string | null
+          brief_description?: string | null
+          channel_id?: string | null
+          clips_metadata?: Json | null
+          created_at?: string
+          error_message?: string | null
+          final_video_path?: string | null
+          id?: string
+          processing_progress?: number | null
+          published_at?: string | null
+          reference_urls?: Json
+          scheduled_publish_at?: string | null
+          scheduling_delay?: number | null
+          scheduling_mode?: string | null
+          script?: string | null
+          script_source?: string | null
+          status?: string
+          target_duration_seconds?: number
+          thumbnail_path?: string | null
+          topic: string
+          updated_at?: string
+          user_id: string
+          voiceover_path?: string | null
+          youtube_chapters?: Json | null
+          youtube_description?: string | null
+          youtube_tags?: string[] | null
+          youtube_title?: string | null
+          youtube_video_id?: string | null
+        }
+        Update: {
+          background_music_category?: string | null
+          background_music_source?: string | null
+          background_music_url?: string | null
+          brief_description?: string | null
+          channel_id?: string | null
+          clips_metadata?: Json | null
+          created_at?: string
+          error_message?: string | null
+          final_video_path?: string | null
+          id?: string
+          processing_progress?: number | null
+          published_at?: string | null
+          reference_urls?: Json
+          scheduled_publish_at?: string | null
+          scheduling_delay?: number | null
+          scheduling_mode?: string | null
+          script?: string | null
+          script_source?: string | null
+          status?: string
+          target_duration_seconds?: number
+          thumbnail_path?: string | null
+          topic?: string
+          updated_at?: string
+          user_id?: string
+          voiceover_path?: string | null
+          youtube_chapters?: Json | null
+          youtube_description?: string | null
+          youtube_tags?: string[] | null
+          youtube_title?: string | null
+          youtube_video_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "long_form_projects_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "youtube_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
