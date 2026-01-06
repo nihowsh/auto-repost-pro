@@ -43,8 +43,9 @@ serve(async (req) => {
       );
     }
 
-    // Validate project is ready
-    if (project.status !== "ready_for_review") {
+    // Validate project is ready (accept both ready_for_review and uploading since hook updates status first)
+    if (project.status !== "ready_for_review" && project.status !== "uploading") {
+      console.error(`Invalid project status: ${project.status}`);
       return new Response(
         JSON.stringify({ error: `Project is not ready for upload. Current status: ${project.status}` }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
