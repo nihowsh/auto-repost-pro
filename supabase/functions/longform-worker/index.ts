@@ -138,24 +138,50 @@ serve(async (req) => {
         .eq("id", channel.id);
     }
 
-    // Download the video from storage
-    const { data: videoData, error: downloadError } = await supabase.storage
+    // Create a signed URL so we can stream the file without loading it fully into memory
+    const { data: signedVideo, error: signedVideoError } = await supabase.storage
       .from("videos")
-      .download(project.final_video_path);
+      .createSignedUrl(project.final_video_path, 60 * 60);
 
-    if (downloadError || !videoData) {
+    if (signedVideoError || !signedVideo?.signedUrl) {
       await supabase
         .from("long_form_projects")
-        .update({ status: "failed", error_message: "Failed to download video from storage" })
+        .update({ status: "failed", error_message: "Failed to create signed URL for video" })
         .eq("id", project_id);
-      
+
       return new Response(
-        JSON.stringify({ error: "Failed to download video" }),
+        JSON.stringify({ error: "Failed to create signed URL for video" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const videoBuffer = await videoData.arrayBuffer();
+    // Stream the video from storage (avoids Memory limit exceeded)
+    const videoResponse = await fetch(signedVideo.signedUrl);
+    if (!videoResponse.ok || !videoResponse.body) {
+      const details = await videoResponse.text().catch(() => "");
+      await supabase
+        .from("long_form_projects")
+        .update({ status: "failed", error_message: "Failed to download video from storage" })
+        .eq("id", project_id);
+
+      return new Response(
+        JSON.stringify({ error: "Failed to download video", details }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const contentLength = videoResponse.headers.get("content-length");
+    if (!contentLength) {
+      await supabase
+        .from("long_form_projects")
+        .update({ status: "failed", error_message: "Missing Content-Length for video" })
+        .eq("id", project_id);
+
+      return new Response(
+        JSON.stringify({ error: "Storage did not provide content-length for this video" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Prepare YouTube metadata
     const metadata = {
@@ -172,7 +198,11 @@ serve(async (req) => {
       },
     };
 
-    console.log(`Uploading long-form video: "${metadata.snippet.title}" (${Math.round(videoBuffer.byteLength / 1024 / 1024)}MB)`);
+    console.log(
+      `Uploading long-form video: "${metadata.snippet.title}" (${Math.round(
+        Number(contentLength) / 1024 / 1024
+      )}MB)`
+    );
 
     // Initiate resumable upload
     const initResponse = await fetch(
@@ -183,7 +213,7 @@ serve(async (req) => {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
           "X-Upload-Content-Type": "video/mp4",
-          "X-Upload-Content-Length": String(videoBuffer.byteLength),
+          "X-Upload-Content-Length": String(contentLength),
         },
         body: JSON.stringify(metadata),
       }
@@ -215,11 +245,14 @@ serve(async (req) => {
       );
     }
 
-    // Upload the video
+    // Upload the video (streaming)
     const uploadResponse = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": "video/mp4" },
-      body: videoBuffer,
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Length": String(contentLength),
+      },
+      body: videoResponse.body,
     });
 
     if (!uploadResponse.ok) {
