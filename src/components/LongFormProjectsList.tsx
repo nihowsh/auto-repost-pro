@@ -24,7 +24,10 @@ import {
   ExternalLink,
   RefreshCw,
   Edit,
+  Upload,
 } from 'lucide-react';
+import { LongFormPreviewButton } from './LongFormVideoPreview';
+import { LongFormPublishDialog } from './LongFormPublishDialog';
 
 interface LongFormProjectsListProps {
   projects: LongFormProject[];
@@ -32,6 +35,8 @@ interface LongFormProjectsListProps {
   onDelete: (projectId: string) => Promise<boolean>;
   onTriggerProcessing: (projectId: string) => Promise<boolean>;
   onEdit: (project: LongFormProject) => void;
+  onPublish: (projectId: string, scheduledPublishAt: string | null) => Promise<boolean>;
+  getLastScheduledTime: (channelId: string | null) => Promise<Date | null>;
 }
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ComponentType<any> }> = {
@@ -55,11 +60,14 @@ export function LongFormProjectsList({
   onDelete,
   onTriggerProcessing,
   onEdit,
+  onPublish,
+  getLastScheduledTime,
 }: LongFormProjectsListProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [publishDialogProject, setPublishDialogProject] = useState<LongFormProject | null>(null);
 
   const handleDelete = async () => {
     if (!projectToDelete) return;
@@ -110,6 +118,7 @@ export function LongFormProjectsList({
           const isProcessing = ['pending_processing', 'downloading_clips', 'assembling', 'uploading'].includes(project.status);
           const canStartProcessing = project.status === 'voiceover_ready' && project.voiceover_path;
           const canRetry = project.status === 'failed';
+          const isReadyForReview = project.status === 'ready_for_review';
 
           return (
             <div key={project.id} className="glass-card p-4">
@@ -204,6 +213,33 @@ export function LongFormProjectsList({
                     </Button>
                   )}
 
+                  {/* Ready for Review: Preview + Re-process + Upload */}
+                  {isReadyForReview && (
+                    <>
+                      <LongFormPreviewButton project={project} />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleTriggerProcessing(project.id)}
+                        disabled={processingId === project.id}
+                        title="Re-process video"
+                      >
+                        {processingId === project.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4" />
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => setPublishDialogProject(project)}
+                      >
+                        <Upload className="w-4 h-4 mr-1" />
+                        Upload
+                      </Button>
+                    </>
+                  )}
+
                   {/* Retry button for failed */}
                   {canRetry && (
                     <Button
@@ -262,6 +298,7 @@ export function LongFormProjectsList({
         })}
       </div>
 
+      {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -278,6 +315,17 @@ export function LongFormProjectsList({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Publish Dialog */}
+      {publishDialogProject && (
+        <LongFormPublishDialog
+          project={publishDialogProject}
+          open={!!publishDialogProject}
+          onOpenChange={(open) => !open && setPublishDialogProject(null)}
+          onPublish={onPublish}
+          getLastScheduledTime={getLastScheduledTime}
+        />
+      )}
     </>
   );
 }

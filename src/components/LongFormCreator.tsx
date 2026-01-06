@@ -55,6 +55,8 @@ export function LongFormCreator() {
     updateProject,
     deleteProject,
     triggerProcessing,
+    publishProject,
+    getLastScheduledTime,
     uploadVoiceover,
     uploadThumbnail,
   } = useLongFormProjects();
@@ -867,6 +869,8 @@ export function LongFormCreator() {
         onDelete={deleteProject}
         onTriggerProcessing={triggerProcessing}
         onEdit={handleEdit}
+        onPublish={publishProject}
+        getLastScheduledTime={getLastScheduledTime}
       />
     </div>
   );

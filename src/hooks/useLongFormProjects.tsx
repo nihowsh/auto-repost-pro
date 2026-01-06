@@ -195,7 +195,7 @@ export function useLongFormProjects() {
       // Update status to pending_processing
       const { error } = await supabase
         .from('long_form_projects')
-        .update({ status: 'pending_processing', error_message: null })
+        .update({ status: 'pending_processing', error_message: null, processing_progress: 0 })
         .eq('id', projectId);
 
       if (error) throw error;
@@ -217,6 +217,105 @@ export function useLongFormProjects() {
       return false;
     }
   }, [fetchProjects, toast]);
+
+  const publishProject = useCallback(async (
+    projectId: string,
+    scheduledPublishAt: string | null
+  ): Promise<boolean> => {
+    try {
+      // First update the project with scheduled time
+      const { error: updateError } = await supabase
+        .from('long_form_projects')
+        .update({
+          scheduled_publish_at: scheduledPublishAt,
+          status: 'uploading',
+        })
+        .eq('id', projectId);
+
+      if (updateError) throw updateError;
+
+      // Trigger the longform-worker
+      const { error: invokeError } = await supabase.functions.invoke('longform-worker', {
+        body: { project_id: projectId },
+      });
+
+      if (invokeError) {
+        // Revert status on failure
+        await supabase
+          .from('long_form_projects')
+          .update({ status: 'ready_for_review' })
+          .eq('id', projectId);
+        throw invokeError;
+      }
+
+      toast({
+        title: scheduledPublishAt ? 'Video scheduled' : 'Upload started',
+        description: scheduledPublishAt
+          ? 'Your video will be published at the scheduled time'
+          : 'Your video is being uploaded to YouTube',
+      });
+
+      await fetchProjects();
+      return true;
+    } catch (error: any) {
+      console.error('Error publishing project:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to publish video',
+        variant: 'destructive',
+      });
+      return false;
+    }
+  }, [fetchProjects, toast]);
+
+  const getLastScheduledTime = useCallback(async (channelId: string | null): Promise<Date | null> => {
+    try {
+      // Get the latest scheduled/published video time from both videos and long_form_projects
+      let latestTime: Date | null = null;
+
+      if (channelId) {
+        // Check videos table
+        const { data: videos } = await supabase
+          .from('videos')
+          .select('scheduled_publish_at, published_at')
+          .eq('channel_id', channelId)
+          .or('status.eq.scheduled,status.eq.published')
+          .order('scheduled_publish_at', { ascending: false, nullsFirst: false })
+          .limit(1);
+
+        if (videos?.[0]) {
+          const videoTime = videos[0].scheduled_publish_at || videos[0].published_at;
+          if (videoTime) {
+            latestTime = new Date(videoTime);
+          }
+        }
+
+        // Check long_form_projects table
+        const { data: projects } = await supabase
+          .from('long_form_projects')
+          .select('scheduled_publish_at, published_at')
+          .eq('channel_id', channelId)
+          .or('status.eq.scheduled,status.eq.published')
+          .order('scheduled_publish_at', { ascending: false, nullsFirst: false })
+          .limit(1);
+
+        if (projects?.[0]) {
+          const projectTime = projects[0].scheduled_publish_at || projects[0].published_at;
+          if (projectTime) {
+            const projectDate = new Date(projectTime);
+            if (!latestTime || projectDate > latestTime) {
+              latestTime = projectDate;
+            }
+          }
+        }
+      }
+
+      return latestTime;
+    } catch (error) {
+      console.error('Error getting last scheduled time:', error);
+      return null;
+    }
+  }, []);
 
   const uploadVoiceover = useCallback(async (projectId: string, file: File): Promise<string | null> => {
     try {
@@ -300,6 +399,8 @@ export function useLongFormProjects() {
     updateProject,
     deleteProject,
     triggerProcessing,
+    publishProject,
+    getLastScheduledTime,
     uploadVoiceover,
     uploadThumbnail,
     getProjectsByStatus,
