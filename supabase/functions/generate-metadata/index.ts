@@ -5,7 +5,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const LOVABLE_AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+// Hardcoded to use Gemini API only
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -13,12 +14,21 @@ serve(async (req) => {
   }
 
   try {
-    const { script, topic, brief_description, chapters, custom_api_key } = await req.json();
+    const { script, topic, brief_description, chapters } = await req.json();
 
     if (!topic) {
       return new Response(
         JSON.stringify({ error: "Topic is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
+    
+    if (!geminiApiKey) {
+      return new Response(
+        JSON.stringify({ error: "Gemini API key not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -62,67 +72,38 @@ Format your response as JSON:
   "chapters": [{"title": "Intro", "start_seconds": 0}, ...]
 }`;
 
-    console.log(`Generating metadata for topic: "${topic}"`);
+    console.log(`Generating metadata for topic: "${topic}" using Gemini API`);
 
-    let response;
-    
-    if (custom_api_key) {
-      response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${custom_api_key}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          max_tokens: 2000,
+    const response = await fetch(`${GEMINI_API_URL}?key=${geminiApiKey}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
+          }
+        ],
+        generationConfig: {
           temperature: 0.7,
-          response_format: { type: "json_object" },
-        }),
-      });
-    } else {
-      const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-      
-      if (!lovableApiKey) {
-        return new Response(
-          JSON.stringify({ error: "Lovable AI not configured. Please provide a custom API key." }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      response = await fetch(LOVABLE_AI_GATEWAY, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${lovableApiKey}`,
+          maxOutputTokens: 2000,
         },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          max_tokens: 2000,
-          temperature: 0.7,
-        }),
-      });
-    }
+      }),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("AI API error:", errorText);
+      console.error("Gemini API error:", errorText);
       return new Response(
         JSON.stringify({ error: "Failed to generate metadata", details: errorText }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const aiResult = await response.json();
-    const content = aiResult.choices?.[0]?.message?.content || "";
+    const geminiResult = await response.json();
+    const content = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     // Parse JSON from response
     let metadata;
@@ -135,7 +116,7 @@ Format your response as JSON:
         throw new Error("No JSON found in response");
       }
     } catch (parseError) {
-      console.error("Failed to parse AI response as JSON:", parseError);
+      console.error("Failed to parse Gemini response as JSON:", parseError);
       // Fallback: generate basic metadata
       metadata = {
         title: `${topic} - Complete Guide`,
