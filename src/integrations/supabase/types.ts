@@ -100,6 +100,7 @@ export type Database = {
           topic: string
           updated_at: string
           user_id: string
+          video_filter: string | null
           voiceover_path: string | null
           youtube_category: string | null
           youtube_chapters: Json | null
@@ -137,6 +138,7 @@ export type Database = {
           topic: string
           updated_at?: string
           user_id: string
+          video_filter?: string | null
           voiceover_path?: string | null
           youtube_category?: string | null
           youtube_chapters?: Json | null
@@ -174,6 +176,7 @@ export type Database = {
           topic?: string
           updated_at?: string
           user_id?: string
+          video_filter?: string | null
           voiceover_path?: string | null
           youtube_category?: string | null
           youtube_chapters?: Json | null
