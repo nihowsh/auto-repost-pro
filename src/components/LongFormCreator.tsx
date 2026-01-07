@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useLongFormProjects, LongFormProject, CreateProjectInput } from '@/hooks/useLongFormProjects';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { LongFormProjectsList } from './LongFormProjectsList';
-import { backgroundMusicLibrary, autoSelectMusic } from '@/data/backgroundMusic';
+import { backgroundMusicLibrary, autoSelectMusic, getRandomTrack } from '@/data/backgroundMusic';
 import { YOUTUBE_CATEGORIES, YOUTUBE_PRIVACY_OPTIONS } from '@/data/youtubeCategories';
 import { videoFilters, getFiltersByCategory, getCategoryDisplayName, getFilterCategories } from '@/data/videoFilters';
 import { FilterPreviewCompare } from './FilterPreview';
@@ -280,15 +280,26 @@ export function LongFormCreator() {
     try {
       // Determine background music
       let bgMusicUrl = customMusicUrl;
-      let bgMusicSource = musicMode;
+      let bgMusicSource: string = musicMode;
       let bgMusicCategory = selectedMusicCategory;
 
-      if (musicMode === 'auto' && !customMusicUrl) {
-        const autoMusic = autoSelectMusic(topic);
-        if (autoMusic) {
-          bgMusicUrl = autoMusic.track.url;
-          bgMusicSource = autoMusic.track.source as any;
-          bgMusicCategory = autoMusic.category.id;
+      if (musicMode === 'auto') {
+        // If user selected a specific category, pick random track from it
+        if (selectedMusicCategory) {
+          const track = getRandomTrack(selectedMusicCategory);
+          if (track) {
+            bgMusicUrl = track.url;
+            bgMusicSource = track.source;
+            bgMusicCategory = selectedMusicCategory;
+          }
+        } else {
+          // Auto-select based on topic keywords
+          const autoMusic = autoSelectMusic(topic);
+          if (autoMusic) {
+            bgMusicUrl = autoMusic.track.url;
+            bgMusicSource = autoMusic.track.source;
+            bgMusicCategory = autoMusic.category.id;
+          }
         }
       }
 
