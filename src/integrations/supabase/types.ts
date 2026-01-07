@@ -101,8 +101,13 @@ export type Database = {
           updated_at: string
           user_id: string
           voiceover_path: string | null
+          youtube_category: string | null
           youtube_chapters: Json | null
           youtube_description: string | null
+          youtube_embeddable: boolean | null
+          youtube_made_for_kids: boolean | null
+          youtube_notify_subscribers: boolean | null
+          youtube_privacy: string | null
           youtube_tags: string[] | null
           youtube_title: string | null
           youtube_video_id: string | null
@@ -133,8 +138,13 @@ export type Database = {
           updated_at?: string
           user_id: string
           voiceover_path?: string | null
+          youtube_category?: string | null
           youtube_chapters?: Json | null
           youtube_description?: string | null
+          youtube_embeddable?: boolean | null
+          youtube_made_for_kids?: boolean | null
+          youtube_notify_subscribers?: boolean | null
+          youtube_privacy?: string | null
           youtube_tags?: string[] | null
           youtube_title?: string | null
           youtube_video_id?: string | null
@@ -165,8 +175,13 @@ export type Database = {
           updated_at?: string
           user_id?: string
           voiceover_path?: string | null
+          youtube_category?: string | null
           youtube_chapters?: Json | null
           youtube_description?: string | null
+          youtube_embeddable?: boolean | null
+          youtube_made_for_kids?: boolean | null
+          youtube_notify_subscribers?: boolean | null
+          youtube_privacy?: string | null
           youtube_tags?: string[] | null
           youtube_title?: string | null
           youtube_video_id?: string | null

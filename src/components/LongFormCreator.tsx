@@ -3,6 +3,7 @@ import { useLongFormProjects, LongFormProject, CreateProjectInput } from '@/hook
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { LongFormProjectsList } from './LongFormProjectsList';
 import { backgroundMusicLibrary, autoSelectMusic } from '@/data/backgroundMusic';
+import { YOUTUBE_CATEGORIES, YOUTUBE_PRIVACY_OPTIONS } from '@/data/youtubeCategories';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -90,6 +91,10 @@ export function LongFormCreator() {
   const [schedulingMode, setSchedulingMode] = useState<'immediate' | 'manual' | 'auto_hours' | 'auto_days' | 'auto_weeks' | 'auto_month'>('manual');
   const [schedulingDelay, setSchedulingDelay] = useState(1);
   const [scheduledDate, setScheduledDate] = useState('');
+  const [youtubeCategory, setYoutubeCategory] = useState('24'); // Default: Entertainment
+  const [youtubePrivacy, setYoutubePrivacy] = useState('public');
+  const [madeForKids, setMadeForKids] = useState(false);
+  const [notifySubscribers, setNotifySubscribers] = useState(true);
 
   const voiceoverInputRef = useRef<HTMLInputElement>(null);
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
@@ -115,6 +120,10 @@ export function LongFormCreator() {
     setSchedulingMode('manual');
     setSchedulingDelay(1);
     setScheduledDate('');
+    setYoutubeCategory('24');
+    setYoutubePrivacy('public');
+    setMadeForKids(false);
+    setNotifySubscribers(true);
     setCurrentStep(0);
     setEditingProject(null);
   };
@@ -141,6 +150,10 @@ export function LongFormCreator() {
     setSelectedChannel(project.channel_id || '');
     setSchedulingMode((project.scheduling_mode as any) || 'manual');
     setSchedulingDelay(project.scheduling_delay || 1);
+    setYoutubeCategory((project as any).youtube_category || '24');
+    setYoutubePrivacy((project as any).youtube_privacy || 'public');
+    setMadeForKids((project as any).youtube_made_for_kids || false);
+    setNotifySubscribers((project as any).youtube_notify_subscribers ?? true);
     setShowCreator(true);
     setCurrentStep(0);
   };
@@ -290,6 +303,10 @@ export function LongFormCreator() {
         youtube_description: youtubeDescription || null,
         youtube_tags: youtubeTags ? youtubeTags.split(',').map(t => t.trim()) : null,
         youtube_chapters: scriptChapters.length > 0 ? scriptChapters : null,
+        youtube_category: youtubeCategory,
+        youtube_privacy: youtubePrivacy,
+        youtube_made_for_kids: madeForKids,
+        youtube_notify_subscribers: notifySubscribers,
         channel_id: selectedChannel || null,
         scheduling_mode: schedulingMode,
         scheduling_delay: schedulingDelay,
@@ -695,6 +712,73 @@ export function LongFormCreator() {
                     onChange={(e) => setYoutubeTags(e.target.value)}
                     placeholder="tag1, tag2, tag3"
                     className="mt-1"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Video Category</Label>
+                    <Select value={youtubeCategory} onValueChange={setYoutubeCategory}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {YOUTUBE_CATEGORIES.map((cat) => (
+                          <SelectItem key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Privacy Setting</Label>
+                    <Select value={youtubePrivacy} onValueChange={setYoutubePrivacy}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select privacy" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {YOUTUBE_PRIVACY_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.id} value={opt.id}>
+                            <div>
+                              <span className="font-medium">{opt.name}</span>
+                              <span className="text-xs text-muted-foreground ml-2">
+                                {opt.description}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <div>
+                    <Label htmlFor="madeForKids" className="cursor-pointer">Made for Kids</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Required by COPPA. Limits some features.
+                    </p>
+                  </div>
+                  <Switch
+                    id="madeForKids"
+                    checked={madeForKids}
+                    onCheckedChange={setMadeForKids}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <div>
+                    <Label htmlFor="notifySubs" className="cursor-pointer">Notify Subscribers</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Send notification to subscribers when published
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifySubs"
+                    checked={notifySubscribers}
+                    onCheckedChange={setNotifySubscribers}
                   />
                 </div>
 
