@@ -422,14 +422,40 @@ function muxWithAudio({ videoPath, voicePath, bgMusicPath, outPath }) {
   if (!fs.existsSync(outPath)) throw new Error("Final mux failed");
 }
 
-// Download background music URL (direct mp3 link)
+// Download background music URL.
+// - If it's a direct file link, download via fetch.
+// - Otherwise, use yt-dlp to extract audio (since runner already depends on it).
 async function downloadUrlToFile(url, outPath) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Music download failed: ${await res.text()}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(outPath, buf);
-  return outPath;
+  const isDirectFile = /\.(mp3|wav|m4a|aac)(\?.*)?$/i.test(url);
+
+  if (isDirectFile) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Music download failed: ${await res.text()}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(outPath, buf);
+    return outPath;
+  }
+
+  // Fallback: try yt-dlp (supports YouTube + many sites)
+  // Note: -o must be a template; ensure we end with .mp3
+  const outTemplate = outPath.endsWith('.mp3') ? outPath : `${outPath}.mp3`;
+  console.log(`🎵 BG music is not a direct file link, trying yt-dlp extraction...`);
+
+  const cmd =
+    `yt-dlp -x --audio-format mp3 --audio-quality 0 ` +
+    `-o "${outTemplate.replace(/\.mp3$/i, '.%(ext)s')}" --no-playlist "${url}"`;
+
+  shInherit(cmd);
+
+  // Resolve actual output (yt-dlp will write .mp3)
+  const finalPath = outTemplate;
+  if (!fs.existsSync(finalPath)) {
+    throw new Error('yt-dlp did not produce an audio file');
+  }
+
+  return finalPath;
 }
+
 
 // ---- Core longform processor ----
 async function processLongformProject(project) {

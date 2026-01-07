@@ -5,8 +5,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Hardcoded to use Gemini API only
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent";
+// Use Lovable AI Gateway (same as generate-script) to avoid external API key / model issues
+const LOVABLE_AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -23,11 +23,11 @@ serve(async (req) => {
       );
     }
 
-    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
-    
-    if (!geminiApiKey) {
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+
+    if (!lovableApiKey) {
       return new Response(
-        JSON.stringify({ error: "Gemini API key not configured" }),
+        JSON.stringify({ error: "AI not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -44,13 +44,11 @@ Guidelines:
 
 ${brief_description ? `Video description: ${brief_description}` : ""}
 
-${script ? `Script excerpt (first 500 chars): ${script.substring(0, 500)}...` : ""}
+${script ? `Script excerpt (first 500 chars): ${String(script).substring(0, 500)}...` : ""}
 
 ${chapters && chapters.length > 0 ? `
 Existing chapters:
-${chapters.map((c: { title: string; start_seconds: number }) => 
-  `${Math.floor(c.start_seconds / 60)}:${String(c.start_seconds % 60).padStart(2, '0')} ${c.title}`
-).join('\n')}
+${chapters.map((c: { title: string; start_seconds: number }) => `${Math.floor(c.start_seconds / 60)}:${String(c.start_seconds % 60).padStart(2, '0')} ${c.title}`).join('\n')}
 ` : ""}
 
 Please provide:
@@ -72,56 +70,52 @@ Format your response as JSON:
   "chapters": [{"title": "Intro", "start_seconds": 0}, ...]
 }`;
 
-    console.log(`Generating metadata for topic: "${topic}" using Gemini API`);
+    console.log(`Generating metadata for topic: "${topic}" via Lovable AI Gateway`);
 
-    const response = await fetch(`${GEMINI_API_URL}?key=${geminiApiKey}`, {
+    const response = await fetch(LOVABLE_AI_GATEWAY, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Authorization": `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
-          }
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2000,
-        },
+        max_tokens: 2000,
+        temperature: 0.7,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Gemini API error:", errorText);
+      console.error("AI API error:", errorText);
       return new Response(
         JSON.stringify({ error: "Failed to generate metadata", details: errorText }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const geminiResult = await response.json();
-    const content = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const aiResult = await response.json();
+    const content = aiResult.choices?.[0]?.message?.content || "";
 
     // Parse JSON from response
     let metadata;
     try {
-      // Try to extract JSON from the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonMatch = String(content).match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         metadata = JSON.parse(jsonMatch[0]);
       } else {
         throw new Error("No JSON found in response");
       }
     } catch (parseError) {
-      console.error("Failed to parse Gemini response as JSON:", parseError);
-      // Fallback: generate basic metadata
+      console.error("Failed to parse AI response as JSON:", parseError);
       metadata = {
         title: `${topic} - Complete Guide`,
-        description: `Learn everything about ${topic}.\n\n${brief_description || ""}\n\n#${topic.replace(/\s+/g, "")}`,
-        tags: topic.split(" ").concat(["tutorial", "guide", "howto"]),
+        description: `Learn everything about ${topic}.\n\n${brief_description || ""}\n\n#${String(topic).replace(/\s+/g, "")}`,
+        tags: String(topic).split(" ").concat(["tutorial", "guide", "howto"]),
         chapters: chapters || [{ title: "Introduction", start_seconds: 0 }],
       };
     }
