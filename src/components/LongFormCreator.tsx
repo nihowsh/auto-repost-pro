@@ -159,9 +159,21 @@ export function LongFormCreator() {
     setReferenceUrls(project.reference_urls.length > 0 ? project.reference_urls : ['']);
     setScript(project.script || '');
     setScriptChapters(project.youtube_chapters || []);
-    // Try to find the track by URL
+
+    // Restore selected background track (supports both public storage URLs and legacy URLs)
     const allTracks = [...getBundledTracks(), ...userTracks];
-    const matchingTrack = allTracks.find(t => t.url === project.background_music_url);
+    const projectBgUrl = project.background_music_url || '';
+
+    const matchingTrack = allTracks.find((t) => {
+      if (!projectBgUrl) return false;
+      if (t.source === 'bundled') {
+        // Our bundled tracks are persisted to storage as: .../background-music/<userId>/bundled/<trackId>.mp3
+        // so matching by track id is more reliable than URL equality.
+        return projectBgUrl.includes(`/bundled/${t.id}.`) || projectBgUrl.endsWith(`/${t.id}.mp3`);
+      }
+      return t.url === projectBgUrl;
+    });
+
     setSelectedTrackId(matchingTrack?.id || '');
     setYoutubeTitle(project.youtube_title || '');
     setYoutubeDescription(project.youtube_description || '');
@@ -302,18 +314,35 @@ export function LongFormCreator() {
       // Determine background music from selected track
       const allTracks = [...getBundledTracks(), ...userTracks];
       const selectedTrack = allTracks.find(t => t.id === selectedTrackId);
-      
+
       let bgMusicUrl = '';
-      let bgMusicSource = 'bundled';
-      
+      let bgMusicSource: 'bundled' | 'user' = 'bundled';
+
       if (selectedTrack) {
-        // For bundled tracks, we need to use the full URL including origin
         if (selectedTrack.source === 'bundled') {
-          bgMusicUrl = `${window.location.origin}${selectedTrack.url}`;
+          // IMPORTANT: the local runner cannot reliably fetch from the app's origin.
+          // So we mirror bundled tracks into the backend "background-music" bucket and save that public URL.
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) throw new Error('Not authenticated');
+
+          const bundledPath = `${user.id}/bundled/${selectedTrack.id}.mp3`;
+
+          const res = await fetch(selectedTrack.url);
+          if (!res.ok) throw new Error(`Failed to read bundled track (${res.status})`);
+          const blob = await res.blob();
+
+          const { error: upErr } = await supabase.storage
+            .from('background-music')
+            .upload(bundledPath, blob, { upsert: true, contentType: 'audio/mpeg' });
+          if (upErr) throw upErr;
+
+          const { data: pub } = supabase.storage.from('background-music').getPublicUrl(bundledPath);
+          bgMusicUrl = pub.publicUrl;
+          bgMusicSource = 'bundled';
         } else {
           bgMusicUrl = selectedTrack.url;
+          bgMusicSource = 'user';
         }
-        bgMusicSource = selectedTrack.source;
       }
 
       // Determine status based on what's complete
