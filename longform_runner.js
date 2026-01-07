@@ -423,37 +423,64 @@ function muxWithAudio({ videoPath, voicePath, bgMusicPath, outPath }) {
 }
 
 // Download background music URL.
-// - If it's a direct file link, download via fetch.
-// - Otherwise, use yt-dlp to extract audio (since runner already depends on it).
+// - Try plain fetch first (fast for direct mp3 links)
+// - If blocked (e.g. 403 AccessDenied from CDN/S3), fall back to yt-dlp which handles many hosts with proper headers/cookies.
 async function downloadUrlToFile(url, outPath) {
-  const isDirectFile = /\.(mp3|wav|m4a|aac)(\?.*)?$/i.test(url);
+  // 1) Try direct download (works for most direct mp3 links)
+  try {
+    const res = await fetch(url, {
+      headers: {
+        // Some CDNs block unknown clients; a browser-ish UA improves success rates.
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "audio/*,*/*;q=0.9",
+      },
+    });
 
-  if (isDirectFile) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Music download failed: ${await res.text()}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    fs.writeFileSync(outPath, buf);
-    return outPath;
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      fs.writeFileSync(outPath, buf);
+      return outPath;
+    }
+
+    // Non-2xx: often "AccessDenied" XML from S3/CDN
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`Music download blocked (${res.status}): ${errBody.substring(0, 200)}`);
+  } catch (e) {
+    console.warn(`⚠️ Direct music download failed, trying yt-dlp... (${e.message || e})`);
   }
 
-  // Fallback: try yt-dlp (supports YouTube + many sites)
-  // Note: -o must be a template; ensure we end with .mp3
-  const outTemplate = outPath.endsWith('.mp3') ? outPath : `${outPath}.mp3`;
-  console.log(`🎵 BG music is not a direct file link, trying yt-dlp extraction...`);
+  // 2) Fallback: yt-dlp extraction
+  const outTemplate = outPath.endsWith(".mp3") ? outPath : `${outPath}.mp3`;
+  const tpl = outTemplate.replace(/\.mp3$/i, ".%(ext)s");
+
+  let extraHeaders = "";
+  try {
+    const host = new URL(url).hostname;
+    // Mixkit commonly requires a referer.
+    if (host.includes("mixkit.co")) {
+      extraHeaders =
+        " --add-header \"Referer:https://mixkit.co/\"" +
+        " --add-header \"User-Agent:Mozilla/5.0\"";
+    } else {
+      extraHeaders = " --add-header \"User-Agent:Mozilla/5.0\"";
+    }
+  } catch {
+    extraHeaders = " --add-header \"User-Agent:Mozilla/5.0\"";
+  }
 
   const cmd =
-    `yt-dlp -x --audio-format mp3 --audio-quality 0 ` +
-    `-o "${outTemplate.replace(/\.mp3$/i, '.%(ext)s')}" --no-playlist "${url}"`;
+    `yt-dlp -x --audio-format mp3 --audio-quality 0` +
+    `${extraHeaders} ` +
+    `-o "${tpl}" --no-playlist "${url}"`;
 
   shInherit(cmd);
 
-  // Resolve actual output (yt-dlp will write .mp3)
-  const finalPath = outTemplate;
-  if (!fs.existsSync(finalPath)) {
-    throw new Error('yt-dlp did not produce an audio file');
+  if (!fs.existsSync(outTemplate)) {
+    throw new Error("yt-dlp did not produce an audio file");
   }
 
-  return finalPath;
+  return outTemplate;
 }
 
 

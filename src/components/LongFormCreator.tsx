@@ -241,8 +241,16 @@ export function LongFormCreator() {
         },
       });
 
-      if (response.error) throw response.error;
-      
+      if (response.error) {
+        const contextBody = (response.error as any)?.context?.body;
+        const contextStatus = (response.error as any)?.context?.status;
+        const details =
+          typeof contextBody === 'string' && contextBody.trim()
+            ? ` (status ${contextStatus ?? 'unknown'}): ${contextBody}`
+            : '';
+        throw new Error(`${response.error.message}${details}`);
+      }
+
       const data = response.data;
       setYoutubeTitle(data.title);
       setYoutubeDescription(data.description);
@@ -250,7 +258,7 @@ export function LongFormCreator() {
       if (data.chapters?.length > 0) {
         setScriptChapters(data.chapters);
       }
-      
+
       toast({ title: 'Metadata generated', description: 'Title, description, and tags have been generated' });
     } catch (error: any) {
       console.error('Error generating metadata:', error);
