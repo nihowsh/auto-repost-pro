@@ -4,6 +4,7 @@ import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { LongFormProjectsList } from './LongFormProjectsList';
 import { backgroundMusicLibrary, autoSelectMusic } from '@/data/backgroundMusic';
 import { YOUTUBE_CATEGORIES, YOUTUBE_PRIVACY_OPTIONS } from '@/data/youtubeCategories';
+import { videoFilters, getFiltersByCategory, getCategoryDisplayName, getFilterCategories } from '@/data/videoFilters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -37,6 +38,7 @@ import {
   ArrowRight,
   Check,
   X,
+  Palette,
 } from 'lucide-react';
 
 const STEPS = [
@@ -44,6 +46,7 @@ const STEPS = [
   { id: 'script', label: 'Script', icon: FileText },
   { id: 'voiceover', label: 'Voiceover', icon: Mic },
   { id: 'music', label: 'Background Music', icon: Music },
+  { id: 'filter', label: 'Video Filter', icon: Palette },
   { id: 'metadata', label: 'Metadata', icon: FileText },
   { id: 'publish', label: 'Publish Settings', icon: Send },
 ];
@@ -95,6 +98,7 @@ export function LongFormCreator() {
   const [youtubePrivacy, setYoutubePrivacy] = useState('public');
   const [madeForKids, setMadeForKids] = useState(false);
   const [notifySubscribers, setNotifySubscribers] = useState(true);
+  const [videoFilter, setVideoFilter] = useState('none');
 
   const voiceoverInputRef = useRef<HTMLInputElement>(null);
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
@@ -124,6 +128,7 @@ export function LongFormCreator() {
     setYoutubePrivacy('public');
     setMadeForKids(false);
     setNotifySubscribers(true);
+    setVideoFilter('none');
     setCurrentStep(0);
     setEditingProject(null);
   };
@@ -154,6 +159,7 @@ export function LongFormCreator() {
     setYoutubePrivacy((project as any).youtube_privacy || 'public');
     setMadeForKids((project as any).youtube_made_for_kids || false);
     setNotifySubscribers((project as any).youtube_notify_subscribers ?? true);
+    setVideoFilter((project as any).video_filter || 'none');
     setShowCreator(true);
     setCurrentStep(0);
   };
@@ -307,6 +313,7 @@ export function LongFormCreator() {
         youtube_privacy: youtubePrivacy,
         youtube_made_for_kids: madeForKids,
         youtube_notify_subscribers: notifySubscribers,
+        video_filter: videoFilter,
         channel_id: selectedChannel || null,
         scheduling_mode: schedulingMode,
         scheduling_delay: schedulingDelay,
@@ -372,9 +379,11 @@ export function LongFormCreator() {
         return voiceoverFile || (editingProject?.voiceover_path);
       case 3: // Music
         return musicMode === 'auto' || customMusicUrl.trim();
-      case 4: // Metadata
+      case 4: // Filter
+        return true; // Filter is always optional
+      case 5: // Metadata
         return youtubeTitle.trim();
-      case 5: // Publish
+      case 6: // Publish
         return selectedChannel;
       default:
         return true;
@@ -665,8 +674,42 @@ export function LongFormCreator() {
               </div>
             )}
 
-            {/* Step 4: Metadata */}
+            {/* Step 4: Video Filter */}
             {currentStep === 4 && (
+              <div className="space-y-6">
+                <div>
+                  <Label className="text-base font-medium mb-4 block">Choose a Video Filter</Label>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Select a filter to apply a visual style to your entire video. Music will auto-adjust to video length.
+                  </p>
+                </div>
+
+                {getFilterCategories().map((category) => (
+                  <div key={category} className="space-y-3">
+                    <h4 className="text-sm font-medium text-muted-foreground">{getCategoryDisplayName(category)}</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                      {getFiltersByCategory(category).map((filter) => (
+                        <button
+                          key={filter.id}
+                          onClick={() => setVideoFilter(filter.id)}
+                          className={`p-3 rounded-lg border text-left transition-all ${
+                            videoFilter === filter.id
+                              ? 'border-primary bg-primary/10 ring-2 ring-primary'
+                              : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                          }`}
+                        >
+                          <div className="font-medium text-sm">{filter.name}</div>
+                          <div className="text-xs text-muted-foreground mt-1">{filter.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Step 5: Metadata */}
+            {currentStep === 5 && (
               <div className="space-y-6">
                 <div className="flex justify-end">
                   <Button onClick={handleGenerateMetadata} disabled={isGenerating}>
@@ -811,8 +854,8 @@ export function LongFormCreator() {
               </div>
             )}
 
-            {/* Step 5: Publish Settings */}
-            {currentStep === 5 && (
+            {/* Step 6: Publish Settings */}
+            {currentStep === 6 && (
               <div className="space-y-6">
                 <div>
                   <Label>Target Channel *</Label>
