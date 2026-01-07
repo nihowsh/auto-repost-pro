@@ -5,6 +5,7 @@ import { LongFormProjectsList } from './LongFormProjectsList';
 import { backgroundMusicLibrary, autoSelectMusic } from '@/data/backgroundMusic';
 import { YOUTUBE_CATEGORIES, YOUTUBE_PRIVACY_OPTIONS } from '@/data/youtubeCategories';
 import { videoFilters, getFiltersByCategory, getCategoryDisplayName, getFilterCategories } from '@/data/videoFilters';
+import { FilterPreviewCompare } from './FilterPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -682,6 +683,12 @@ export function LongFormCreator() {
                   <p className="text-sm text-muted-foreground mb-4">
                     Select a filter to apply a visual style to your entire video. Music will auto-adjust to video length.
                   </p>
+                </div>
+
+                {/* Live Preview */}
+                <div className="bg-muted/30 rounded-xl p-4 border">
+                  <h4 className="text-sm font-medium mb-3">Live Preview</h4>
+                  <FilterPreviewCompare filterId={videoFilter} />
                 </div>
 
                 {getFilterCategories().map((category) => (
