@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import { useLongFormProjects, LongFormProject, CreateProjectInput } from '@/hooks/useLongFormProjects';
 import { useYouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { LongFormProjectsList } from './LongFormProjectsList';
-import { backgroundMusicLibrary, autoSelectMusic, getRandomTrack } from '@/data/backgroundMusic';
+import { getBundledTracks, MusicTrack } from '@/data/backgroundMusic';
+import { useBackgroundMusic } from '@/hooks/useBackgroundMusic';
 import { YOUTUBE_CATEGORIES, YOUTUBE_PRIVACY_OPTIONS } from '@/data/youtubeCategories';
 import { videoFilters, getFiltersByCategory, getCategoryDisplayName, getFilterCategories } from '@/data/videoFilters';
 import { FilterPreviewCompare } from './FilterPreview';
@@ -40,6 +41,8 @@ import {
   Check,
   X,
   Palette,
+  Play,
+  Pause,
 } from 'lucide-react';
 
 const STEPS = [
@@ -66,6 +69,7 @@ export function LongFormCreator() {
     uploadThumbnail,
   } = useLongFormProjects();
   const { channels } = useYouTubeChannel();
+  const { userTracks, uploadTrack, deleteTrack } = useBackgroundMusic();
   const { toast } = useToast();
 
   const [showCreator, setShowCreator] = useState(false);
@@ -84,9 +88,7 @@ export function LongFormCreator() {
   const [script, setScript] = useState('');
   const [scriptChapters, setScriptChapters] = useState<{ title: string; start_seconds: number }[]>([]);
   const [voiceoverFile, setVoiceoverFile] = useState<File | null>(null);
-  const [musicMode, setMusicMode] = useState<'auto' | 'manual'>('auto');
-  const [selectedMusicCategory, setSelectedMusicCategory] = useState('');
-  const [customMusicUrl, setCustomMusicUrl] = useState('');
+  const [selectedTrackId, setSelectedTrackId] = useState<string>('');
   const [youtubeTitle, setYoutubeTitle] = useState('');
   const [youtubeDescription, setYoutubeDescription] = useState('');
   const [youtubeTags, setYoutubeTags] = useState('');
@@ -100,6 +102,16 @@ export function LongFormCreator() {
   const [madeForKids, setMadeForKids] = useState(false);
   const [notifySubscribers, setNotifySubscribers] = useState(true);
   const [videoFilter, setVideoFilter] = useState('none');
+  
+  // Audio preview state
+  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Music upload state
+  const [uploadingMusic, setUploadingMusic] = useState(false);
+  const [newMusicTitle, setNewMusicTitle] = useState('');
+  const [newMusicFile, setNewMusicFile] = useState<File | null>(null);
+  const musicUploadRef = useRef<HTMLInputElement>(null);
 
   const voiceoverInputRef = useRef<HTMLInputElement>(null);
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
@@ -114,9 +126,9 @@ export function LongFormCreator() {
     setScript('');
     setScriptChapters([]);
     setVoiceoverFile(null);
-    setMusicMode('auto');
-    setSelectedMusicCategory('');
-    setCustomMusicUrl('');
+    setSelectedTrackId('');
+    setPlayingTrackId(null);
+    if (audioRef.current) audioRef.current.pause();
     setYoutubeTitle('');
     setYoutubeDescription('');
     setYoutubeTags('');
@@ -147,9 +159,10 @@ export function LongFormCreator() {
     setReferenceUrls(project.reference_urls.length > 0 ? project.reference_urls : ['']);
     setScript(project.script || '');
     setScriptChapters(project.youtube_chapters || []);
-    setMusicMode(project.background_music_source === 'manual' ? 'manual' : 'auto');
-    setSelectedMusicCategory(project.background_music_category || '');
-    setCustomMusicUrl(project.background_music_url || '');
+    // Try to find the track by URL
+    const allTracks = [...getBundledTracks(), ...userTracks];
+    const matchingTrack = allTracks.find(t => t.url === project.background_music_url);
+    setSelectedTrackId(matchingTrack?.id || '');
     setYoutubeTitle(project.youtube_title || '');
     setYoutubeDescription(project.youtube_description || '');
     setYoutubeTags(project.youtube_tags?.join(', ') || '');
@@ -286,29 +299,21 @@ export function LongFormCreator() {
 
     setIsSaving(true);
     try {
-      // Determine background music
-      let bgMusicUrl = customMusicUrl;
-      let bgMusicSource: string = musicMode;
-      let bgMusicCategory = selectedMusicCategory;
-
-      if (musicMode === 'auto') {
-        // If user selected a specific category, pick random track from it
-        if (selectedMusicCategory) {
-          const track = getRandomTrack(selectedMusicCategory);
-          if (track) {
-            bgMusicUrl = track.url;
-            bgMusicSource = track.source;
-            bgMusicCategory = selectedMusicCategory;
-          }
+      // Determine background music from selected track
+      const allTracks = [...getBundledTracks(), ...userTracks];
+      const selectedTrack = allTracks.find(t => t.id === selectedTrackId);
+      
+      let bgMusicUrl = '';
+      let bgMusicSource = 'bundled';
+      
+      if (selectedTrack) {
+        // For bundled tracks, we need to use the full URL including origin
+        if (selectedTrack.source === 'bundled') {
+          bgMusicUrl = `${window.location.origin}${selectedTrack.url}`;
         } else {
-          // Auto-select based on topic keywords
-          const autoMusic = autoSelectMusic(topic);
-          if (autoMusic) {
-            bgMusicUrl = autoMusic.track.url;
-            bgMusicSource = autoMusic.track.source;
-            bgMusicCategory = autoMusic.category.id;
-          }
+          bgMusicUrl = selectedTrack.url;
         }
+        bgMusicSource = selectedTrack.source;
       }
 
       // Determine status based on what's complete
@@ -324,7 +329,7 @@ export function LongFormCreator() {
         script_source: useAiScript ? 'ai_generated' : 'manual',
         background_music_url: bgMusicUrl || null,
         background_music_source: bgMusicSource,
-        background_music_category: bgMusicCategory || null,
+        background_music_category: null,
         youtube_title: youtubeTitle || null,
         youtube_description: youtubeDescription || null,
         youtube_tags: youtubeTags ? youtubeTags.split(',').map(t => t.trim()) : null,
@@ -398,7 +403,7 @@ export function LongFormCreator() {
       case 2: // Voiceover
         return voiceoverFile || (editingProject?.voiceover_path);
       case 3: // Music
-        return musicMode === 'auto' || customMusicUrl.trim();
+        return !!selectedTrackId;
       case 4: // Filter
         return true; // Filter is always optional
       case 5: // Metadata
@@ -641,56 +646,172 @@ export function LongFormCreator() {
             {/* Step 3: Background Music */}
             {currentStep === 3 && (
               <div className="space-y-6">
-                <div className="flex gap-4">
-                  <Button
-                    variant={musicMode === 'auto' ? 'default' : 'outline'}
-                    onClick={() => setMusicMode('auto')}
-                    className="flex-1"
-                  >
-                    Auto-select based on topic
-                  </Button>
-                  <Button
-                    variant={musicMode === 'manual' ? 'default' : 'outline'}
-                    onClick={() => setMusicMode('manual')}
-                    className="flex-1"
-                  >
-                    Provide custom URL
-                  </Button>
+                {/* Audio element for previews */}
+                <audio ref={audioRef} onEnded={() => setPlayingTrackId(null)} />
+                
+                {/* Bundled Tracks */}
+                <div>
+                  <Label className="text-base font-medium mb-3 block">Bundled Tracks</Label>
+                  <div className="grid gap-2">
+                    {getBundledTracks().map((track) => (
+                      <div
+                        key={track.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                          selectedTrackId === track.id
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                        onClick={() => setSelectedTrackId(track.id)}
+                      >
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (playingTrackId === track.id) {
+                              audioRef.current?.pause();
+                              setPlayingTrackId(null);
+                            } else {
+                              if (audioRef.current) {
+                                audioRef.current.src = track.url;
+                                audioRef.current.play();
+                              }
+                              setPlayingTrackId(track.id);
+                            }
+                          }}
+                        >
+                          {playingTrackId === track.id ? (
+                            <Pause className="h-4 w-4" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <span className="font-medium flex-1">{track.name}</span>
+                        {selectedTrackId === track.id && (
+                          <Check className="h-4 w-4 text-primary" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-
-                {musicMode === 'auto' && (
-                  <div>
-                    <Label>Music Category</Label>
-                    <Select value={selectedMusicCategory} onValueChange={setSelectedMusicCategory}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Auto-detect from topic" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {backgroundMusicLibrary.map((category) => (
-                          <SelectItem key={category.id} value={category.id}>
-                            {category.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-sm text-muted-foreground mt-2">
-                      Leave empty to auto-detect based on your topic keywords
-                    </p>
+                
+                {/* User Uploaded Tracks */}
+                <div>
+                  <Label className="text-base font-medium mb-3 block">Your Tracks</Label>
+                  {userTracks.length > 0 ? (
+                    <div className="grid gap-2 mb-4">
+                      {userTracks.map((track) => (
+                        <div
+                          key={track.id}
+                          className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                            selectedTrackId === track.id
+                              ? 'border-primary bg-primary/10'
+                              : 'border-border hover:border-primary/50'
+                          }`}
+                          onClick={() => setSelectedTrackId(track.id)}
+                        >
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (playingTrackId === track.id) {
+                                audioRef.current?.pause();
+                                setPlayingTrackId(null);
+                              } else {
+                                if (audioRef.current) {
+                                  audioRef.current.src = track.url;
+                                  audioRef.current.play();
+                                }
+                                setPlayingTrackId(track.id);
+                              }
+                            }}
+                          >
+                            {playingTrackId === track.id ? (
+                              <Pause className="h-4 w-4" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <span className="font-medium flex-1">{track.name}</span>
+                          {selectedTrackId === track.id && (
+                            <Check className="h-4 w-4 text-primary" />
+                          )}
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (selectedTrackId === track.id) setSelectedTrackId('');
+                              deleteTrack(track.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground mb-4">No custom tracks yet.</p>
+                  )}
+                  
+                  {/* Upload new track */}
+                  <div className="p-4 border border-dashed rounded-lg space-y-3">
+                    <Label>Add New Track</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Track name"
+                        value={newMusicTitle}
+                        onChange={(e) => setNewMusicTitle(e.target.value)}
+                      />
+                      <input
+                        ref={musicUploadRef}
+                        type="file"
+                        accept="audio/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) setNewMusicFile(file);
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => musicUploadRef.current?.click()}
+                      >
+                        {newMusicFile ? newMusicFile.name.slice(0, 15) + '...' : 'Choose File'}
+                      </Button>
+                    </div>
+                    <Button
+                      type="button"
+                      disabled={!newMusicTitle.trim() || !newMusicFile || uploadingMusic}
+                      onClick={async () => {
+                        if (!newMusicTitle.trim() || !newMusicFile) return;
+                        setUploadingMusic(true);
+                        const track = await uploadTrack(newMusicFile, newMusicTitle.trim());
+                        if (track) {
+                          setSelectedTrackId(track.id);
+                        }
+                        setNewMusicTitle('');
+                        setNewMusicFile(null);
+                        setUploadingMusic(false);
+                      }}
+                    >
+                      {uploadingMusic ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4 mr-2" />
+                      )}
+                      Upload Track
+                    </Button>
                   </div>
-                )}
-
-                {musicMode === 'manual' && (
-                  <div>
-                    <Label htmlFor="musicUrl">Music URL (direct link to MP3)</Label>
-                    <Input
-                      id="musicUrl"
-                      value={customMusicUrl}
-                      onChange={(e) => setCustomMusicUrl(e.target.value)}
-                      placeholder="https://example.com/music.mp3"
-                      className="mt-1"
-                    />
-                  </div>
-                )}
+                </div>
               </div>
             )}
 

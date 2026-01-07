@@ -47,6 +47,30 @@ export type Database = {
         }
         Relationships: []
       }
+      background_music_tracks: {
+        Row: {
+          created_at: string
+          file_path: string
+          id: string
+          title: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          file_path: string
+          id?: string
+          title: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          file_path?: string
+          id?: string
+          title?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       channel_upload_locks: {
         Row: {
           channel_id: string
