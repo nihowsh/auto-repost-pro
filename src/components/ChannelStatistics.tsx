@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useYouTubeChannel, YouTubeChannel } from '@/hooks/useYouTubeChannel';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
+import { useYouTubeAnalytics, ChannelStats, AnalyticsRow, VideoAnalytics } from '@/hooks/useYouTubeAnalytics';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -11,6 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { GrowthTrendChart } from './stats/GrowthTrendChart';
+import { YPPEligibilityTracker } from './stats/YPPEligibilityTracker';
+import { TopPerformers } from './stats/TopPerformers';
+import { VideoComparison } from './stats/VideoComparison';
+import { ChannelComparison } from './stats/ChannelComparison';
 import {
   BarChart3,
   Users,
@@ -18,29 +23,94 @@ import {
   Clock,
   TrendingUp,
   TrendingDown,
-  DollarSign,
-  Target,
   Film,
   Video,
-  Zap,
-  ExternalLink,
-  AlertCircle,
+  RefreshCw,
   Loader2,
 } from 'lucide-react';
+import { Button } from './ui/button';
+import { subDays } from 'date-fns';
 
 type ContentFilter = 'all' | 'long' | 'short';
+type DateRange = '7d' | '28d' | '90d' | '365d';
+
+interface ChannelWithStats extends YouTubeChannel {
+  stats?: ChannelStats;
+}
 
 export function ChannelStatistics() {
   const { channels, selectedChannelId, selectChannel } = useYouTubeChannel();
+  const { loading, error, fetchChannelStats, fetchAnalyticsReport, fetchTopVideos } = useYouTubeAnalytics();
   const [contentFilter, setContentFilter] = useState<ContentFilter>('all');
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRange>('7d');
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Data states
+  const [channelStats, setChannelStats] = useState<Record<string, ChannelStats>>({});
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsRow[]>([]);
+  const [topVideos, setTopVideos] = useState<VideoAnalytics[]>([]);
 
   const selectedChannel = useMemo(() => {
     return channels.find(c => c.id === selectedChannelId) || channels[0] || null;
   }, [channels, selectedChannelId]);
 
-  // TODO: This will be replaced with actual YouTube Analytics API integration
-  const analyticsEnabled = false;
+  const channelsWithStats: ChannelWithStats[] = useMemo(() => {
+    return channels.map(c => ({ ...c, stats: channelStats[c.id] }));
+  }, [channels, channelStats]);
+
+  const topChannels = useMemo(() => {
+    return [...channelsWithStats]
+      .filter(c => c.stats)
+      .sort((a, b) => (b.stats?.viewCount || 0) - (a.stats?.viewCount || 0));
+  }, [channelsWithStats]);
+
+  const dateRanges: { id: DateRange; label: string; days: number }[] = [
+    { id: '7d', label: '7 Days', days: 7 },
+    { id: '28d', label: '28 Days', days: 28 },
+    { id: '90d', label: '90 Days', days: 90 },
+    { id: '365d', label: '1 Year', days: 365 },
+  ];
+
+  const loadData = async () => {
+    if (!selectedChannel) return;
+    setRefreshing(true);
+
+    const days = dateRanges.find(r => r.id === dateRange)?.days || 7;
+    const endDate = new Date();
+    const startDate = subDays(endDate, days);
+
+    // Fetch all data in parallel
+    const [stats, analytics, videos] = await Promise.all([
+      fetchChannelStats(selectedChannel.id),
+      fetchAnalyticsReport(selectedChannel.id, startDate, endDate),
+      fetchTopVideos(selectedChannel.id, startDate, endDate),
+    ]);
+
+    if (stats) {
+      setChannelStats(prev => ({ ...prev, [selectedChannel.id]: stats }));
+    }
+    if (analytics) setAnalyticsData(analytics);
+    if (videos) setTopVideos(videos);
+
+    // Also fetch stats for all other channels for comparison
+    for (const ch of channels) {
+      if (ch.id !== selectedChannel.id && !channelStats[ch.id]) {
+        const chStats = await fetchChannelStats(ch.id);
+        if (chStats) {
+          setChannelStats(prev => ({ ...prev, [ch.id]: chStats }));
+        }
+      }
+    }
+
+    setRefreshing(false);
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [selectedChannel?.id, dateRange]);
+
+  const currentStats = selectedChannel ? channelStats[selectedChannel.id] : null;
+  const watchTimeHours = analyticsData.reduce((sum, r) => sum + r.watchTimeMinutes / 60, 0);
 
   if (channels.length === 0) {
     return (
@@ -49,23 +119,17 @@ export function ChannelStatistics() {
           <BarChart3 className="w-8 h-8 text-muted-foreground" />
         </div>
         <h3 className="text-lg font-medium text-foreground mb-2">No Channels Connected</h3>
-        <p className="text-muted-foreground mb-4">
-          Connect a YouTube channel to view analytics
-        </p>
+        <p className="text-muted-foreground mb-4">Connect a YouTube channel to view analytics</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Header with Channel Selector and Content Filter */}
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          {/* Channel Selector */}
-          <Select
-            value={selectedChannel?.id || ''}
-            onValueChange={(id) => selectChannel(id)}
-          >
+          <Select value={selectedChannel?.id || ''} onValueChange={selectChannel}>
             <SelectTrigger className="w-[240px]">
               <SelectValue placeholder="Select channel" />
             </SelectTrigger>
@@ -74,11 +138,7 @@ export function ChannelStatistics() {
                 <SelectItem key={channel.id} value={channel.id}>
                   <div className="flex items-center gap-2">
                     {channel.channel_thumbnail && (
-                      <img
-                        src={channel.channel_thumbnail}
-                        alt=""
-                        className="w-5 h-5 rounded-full"
-                      />
+                      <img src={channel.channel_thumbnail} alt="" className="w-5 h-5 rounded-full" />
                     )}
                     <span className="truncate max-w-[180px]">{channel.channel_title}</span>
                   </div>
@@ -87,11 +147,10 @@ export function ChannelStatistics() {
             </SelectContent>
           </Select>
 
-          {/* Content Type Filter */}
           <div className="flex gap-1 p-1 bg-card border border-border rounded-lg">
             {[
               { id: 'all' as const, label: 'All', icon: BarChart3 },
-              { id: 'long' as const, label: 'Long-Form', icon: Film },
+              { id: 'long' as const, label: 'Long', icon: Film },
               { id: 'short' as const, label: 'Shorts', icon: Video },
             ].map((filter) => (
               <button
@@ -108,202 +167,74 @@ export function ChannelStatistics() {
               </button>
             ))}
           </div>
+
+          <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRange)}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {dateRanges.map((r) => (
+                <SelectItem key={r.id} value={r.id}>{r.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Analytics Status */}
-        {!analyticsEnabled && (
-          <Badge variant="outline" className="text-amber-500 border-amber-500/50">
-            <AlertCircle className="w-3 h-3 mr-1" />
-            Analytics API not connected
-          </Badge>
-        )}
+        <Button variant="outline" size="sm" onClick={loadData} disabled={refreshing}>
+          {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          <span className="ml-2">Refresh</span>
+        </Button>
       </div>
 
-      {/* Analytics Not Enabled State */}
-      {!analyticsEnabled && (
-        <Card className="border-dashed border-2">
-          <CardContent className="py-12 text-center">
-            <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
-              <BarChart3 className="w-10 h-10 text-primary" />
-            </div>
-            <h3 className="text-xl font-semibold mb-2">YouTube Analytics Coming Soon</h3>
-            <p className="text-muted-foreground max-w-md mx-auto mb-6">
-              We're building a comprehensive analytics dashboard with real-time metrics,
-              growth trends, monetization tracking, and detailed video performance analysis.
-            </p>
-
-            {/* Feature Preview Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl mx-auto mt-8">
-              {[
-                { icon: Users, label: 'Subscribers', desc: 'Real-time tracking' },
-                { icon: Eye, label: 'Views', desc: 'Daily/weekly/monthly' },
-                { icon: Clock, label: 'Watch Time', desc: 'Hours tracked' },
-                { icon: DollarSign, label: 'Revenue', desc: 'If monetized' },
-                { icon: TrendingUp, label: 'Growth', desc: 'Trend analysis' },
-                { icon: Target, label: 'Goals', desc: 'Custom targets' },
-                { icon: Zap, label: 'Alerts', desc: 'Spike detection' },
-                { icon: BarChart3, label: 'Comparison', desc: 'Video vs video' },
-              ].map((feature) => (
-                <div
-                  key={feature.label}
-                  className="p-4 rounded-lg bg-muted/50 text-left"
-                >
-                  <feature.icon className="w-5 h-5 text-primary mb-2" />
-                  <div className="font-medium text-sm">{feature.label}</div>
-                  <div className="text-xs text-muted-foreground">{feature.desc}</div>
-                </div>
-              ))}
-            </div>
-
-            <p className="text-sm text-muted-foreground mt-8">
-              YouTube Analytics API integration requires additional OAuth scopes.
-              <br />
-              This feature will be available in a future update.
-            </p>
-          </CardContent>
-        </Card>
+      {error && (
+        <Badge variant="destructive">{error}</Badge>
       )}
 
-      {/* Placeholder Stats Cards (will show real data when analytics is enabled) */}
-      {analyticsEnabled && (
-        <>
-          {/* Overview Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatsCard
-              title="Subscribers"
-              value="-"
-              icon={Users}
-              trend={null}
-            />
-            <StatsCard
-              title="Total Views"
-              value="-"
-              icon={Eye}
-              trend={null}
-            />
-            <StatsCard
-              title="Watch Time"
-              value="-"
-              icon={Clock}
-              trend={null}
-            />
-            <StatsCard
-              title="Est. Revenue"
-              value="-"
-              icon={DollarSign}
-              trend={null}
-            />
-          </div>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatsCard title="Subscribers" value={currentStats?.subscriberCount?.toLocaleString() || '-'} icon={Users} />
+        <StatsCard title="Total Views" value={currentStats?.viewCount?.toLocaleString() || '-'} icon={Eye} />
+        <StatsCard title="Videos" value={currentStats?.videoCount?.toLocaleString() || '-'} icon={Video} />
+        <StatsCard title="Watch Time" value={watchTimeHours > 0 ? `${Math.round(watchTimeHours).toLocaleString()}h` : '-'} icon={Clock} />
+      </div>
 
-          {/* Detailed Tabs */}
-          <Tabs defaultValue="overview" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="growth">Growth</TabsTrigger>
-              <TabsTrigger value="videos">Videos</TabsTrigger>
-              <TabsTrigger value="audience">Audience</TabsTrigger>
-              <TabsTrigger value="traffic">Traffic</TabsTrigger>
-              <TabsTrigger value="revenue">Revenue</TabsTrigger>
-            </TabsList>
+      {/* Top Performers */}
+      <TopPerformers topVideos={topVideos} topChannels={topChannels} loading={loading} />
 
-            <TabsContent value="overview">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Dashboard Overview</CardTitle>
-                  <CardDescription>
-                    Real-time counters and growth metrics
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Analytics data will appear here</p>
-                </CardContent>
-              </Card>
-            </TabsContent>
+      {/* Tabs */}
+      <Tabs defaultValue="growth" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="growth">Growth</TabsTrigger>
+          <TabsTrigger value="videos">Video Comparison</TabsTrigger>
+          <TabsTrigger value="channels">Channel Comparison</TabsTrigger>
+          <TabsTrigger value="ypp">YPP Eligibility</TabsTrigger>
+        </TabsList>
 
-            <TabsContent value="growth">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Growth & Trends</CardTitle>
-                  <CardDescription>
-                    Daily/weekly/monthly trend charts
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Growth charts will appear here</p>
-                </CardContent>
-              </Card>
-            </TabsContent>
+        <TabsContent value="growth">
+          <GrowthTrendChart data={analyticsData} loading={loading} />
+        </TabsContent>
 
-            <TabsContent value="videos">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Per-Video Analysis</CardTitle>
-                  <CardDescription>
-                    Scorecard per video with detailed metrics
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Video performance data will appear here</p>
-                </CardContent>
-              </Card>
-            </TabsContent>
+        <TabsContent value="videos">
+          <VideoComparison availableVideos={topVideos} loading={loading} />
+        </TabsContent>
 
-            <TabsContent value="audience">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Audience & Behavior</CardTitle>
-                  <CardDescription>
-                    New vs returning viewers, retention analysis
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Audience insights will appear here</p>
-                </CardContent>
-              </Card>
-            </TabsContent>
+        <TabsContent value="channels">
+          <ChannelComparison channels={channelsWithStats} loading={loading} />
+        </TabsContent>
 
-            <TabsContent value="traffic">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Traffic & Discovery</CardTitle>
-                  <CardDescription>
-                    Traffic sources, search terms, CTR
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Traffic data will appear here</p>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="revenue">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Monetization & Revenue</CardTitle>
-                  <CardDescription>
-                    YPP eligibility, revenue breakdown, RPM/CPM
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Revenue data will appear here</p>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </>
-      )}
+        <TabsContent value="ypp">
+          <YPPEligibilityTracker
+            subscriberCount={currentStats?.subscriberCount || 0}
+            watchTimeHours={watchTimeHours}
+            loading={loading}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-interface StatsCardProps {
-  title: string;
-  value: string;
-  icon: React.ComponentType<{ className?: string }>;
-  trend: { value: number; label: string } | null;
-}
-
-function StatsCard({ title, value, icon: Icon, trend }: StatsCardProps) {
+function StatsCard({ title, value, icon: Icon }: { title: string; value: string; icon: React.ComponentType<{ className?: string }> }) {
   return (
     <Card>
       <CardContent className="p-4">
@@ -312,19 +243,6 @@ function StatsCard({ title, value, icon: Icon, trend }: StatsCardProps) {
           <Icon className="w-4 h-4 text-muted-foreground" />
         </div>
         <div className="text-2xl font-bold">{value}</div>
-        {trend && (
-          <div className={`flex items-center gap-1 text-xs mt-1 ${
-            trend.value >= 0 ? 'text-green-500' : 'text-red-500'
-          }`}>
-            {trend.value >= 0 ? (
-              <TrendingUp className="w-3 h-3" />
-            ) : (
-              <TrendingDown className="w-3 h-3" />
-            )}
-            <span>{trend.value >= 0 ? '+' : ''}{trend.value}%</span>
-            <span className="text-muted-foreground">{trend.label}</span>
-          </div>
-        )}
       </CardContent>
     </Card>
   );
