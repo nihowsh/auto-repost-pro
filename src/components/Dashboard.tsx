@@ -9,6 +9,7 @@ import { ChannelScraperForm } from './ChannelScraperForm';
 import { ApiKeyManager } from './ApiKeyManager';
 import { ChannelScheduleInfo } from './ChannelScheduleInfo';
 import { LongFormCreator } from './LongFormCreator';
+import { ChannelStatistics } from './ChannelStatistics';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -32,6 +33,7 @@ import {
   Terminal,
   Trash2,
   Film,
+  BarChart3,
 } from 'lucide-react';
 
 export function Dashboard() {
@@ -65,6 +67,7 @@ export function Dashboard() {
     { id: 'scheduled', label: 'Scheduled', icon: Clock, count: scheduledVideos.length },
     { id: 'published', label: 'Published', icon: CheckCircle, count: publishedVideos.length },
     { id: 'failed', label: 'Failed', icon: AlertCircle, count: failedVideos.length },
+    { id: 'stats', label: 'Stats', icon: BarChart3, count: null },
     { id: 'runner', label: 'Runner', icon: Terminal, count: null },
   ];
 
@@ -90,7 +93,7 @@ export function Dashboard() {
       <ChannelScheduleInfo channels={channels} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-7 bg-card border border-border rounded-xl p-1 h-auto">
+        <TabsList className="grid w-full grid-cols-8 bg-card border border-border rounded-xl p-1 h-auto">
           {tabs.map((tab) => (
             <TabsTrigger
               key={tab.id}
@@ -283,6 +286,10 @@ export function Dashboard() {
             onDelete={deleteVideo}
             onUpdate={refetchVideos}
           />
+        </TabsContent>
+
+        <TabsContent value="stats" className="animate-fade-in">
+          <ChannelStatistics />
         </TabsContent>
 
         <TabsContent value="runner" className="animate-fade-in">

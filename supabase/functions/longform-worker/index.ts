@@ -184,17 +184,26 @@ serve(async (req) => {
     }
 
     // Prepare YouTube metadata
+    // Use youtube_category from project if set, otherwise default to 22 (People & Blogs)
+    const categoryId = project.youtube_category || "22";
+    
     const metadata = {
       snippet: {
         title: project.youtube_title || project.topic,
         description: project.youtube_description || project.brief_description || "",
         tags: project.youtube_tags || [],
-        categoryId: "22", // People & Blogs
+        categoryId,
+        // Set language to English for captions
+        defaultLanguage: "en",
+        defaultAudioLanguage: "en",
       },
       status: {
-        privacyStatus: project.scheduled_publish_at ? "private" : "public",
+        privacyStatus: project.scheduled_publish_at 
+          ? "private" 
+          : (project.youtube_privacy || "public"),
         ...(project.scheduled_publish_at && { publishAt: project.scheduled_publish_at }),
-        selfDeclaredMadeForKids: false,
+        selfDeclaredMadeForKids: project.youtube_made_for_kids ?? false,
+        embeddable: project.youtube_embeddable ?? true,
       },
     };
 

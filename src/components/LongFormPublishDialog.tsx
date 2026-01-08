@@ -23,7 +23,7 @@ interface LongFormPublishDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPublish: (projectId: string, scheduledPublishAt: string | null) => Promise<boolean>;
-  getLastScheduledTime: (channelId: string | null) => Promise<Date | null>;
+  getLastScheduledTime: (channelId: string | null, longFormOnly?: boolean) => Promise<Date | null>;
 }
 
 type ScheduleMode = 'immediate' | 'specific' | 'relative';
@@ -65,10 +65,11 @@ export function LongFormPublishDialog({
   const [publishing, setPublishing] = useState(false);
 
   // Fetch last scheduled time when dialog opens
+  // Use longFormOnly=true so we only check long-form videos for scheduling
   useEffect(() => {
     if (open && project.channel_id) {
       setLoadingLastTime(true);
-      getLastScheduledTime(project.channel_id).then((time) => {
+      getLastScheduledTime(project.channel_id, true).then((time) => {
         setLastScheduledTime(time);
         setLoadingLastTime(false);
       });
