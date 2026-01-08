@@ -268,25 +268,35 @@ export function useLongFormProjects() {
     }
   }, [fetchProjects, toast]);
 
-  const getLastScheduledTime = useCallback(async (channelId: string | null): Promise<Date | null> => {
+  /**
+   * Get the last scheduled/published time for a channel.
+   * @param channelId - The channel ID to check
+   * @param longFormOnly - If true, only check long_form_projects table (for long-form scheduling)
+   */
+  const getLastScheduledTime = useCallback(async (
+    channelId: string | null,
+    longFormOnly: boolean = false
+  ): Promise<Date | null> => {
     try {
-      // Get the latest scheduled/published video time from both videos and long_form_projects
+      // Get the latest scheduled/published video time
       let latestTime: Date | null = null;
 
       if (channelId) {
-        // Check videos table
-        const { data: videos } = await supabase
-          .from('videos')
-          .select('scheduled_publish_at, published_at')
-          .eq('channel_id', channelId)
-          .or('status.eq.scheduled,status.eq.published')
-          .order('scheduled_publish_at', { ascending: false, nullsFirst: false })
-          .limit(1);
+        // Check videos table ONLY if not long-form only mode
+        if (!longFormOnly) {
+          const { data: videos } = await supabase
+            .from('videos')
+            .select('scheduled_publish_at, published_at')
+            .eq('channel_id', channelId)
+            .or('status.eq.scheduled,status.eq.published')
+            .order('scheduled_publish_at', { ascending: false, nullsFirst: false })
+            .limit(1);
 
-        if (videos?.[0]) {
-          const videoTime = videos[0].scheduled_publish_at || videos[0].published_at;
-          if (videoTime) {
-            latestTime = new Date(videoTime);
+          if (videos?.[0]) {
+            const videoTime = videos[0].scheduled_publish_at || videos[0].published_at;
+            if (videoTime) {
+              latestTime = new Date(videoTime);
+            }
           }
         }
 

@@ -36,7 +36,7 @@ interface LongFormProjectsListProps {
   onTriggerProcessing: (projectId: string) => Promise<boolean>;
   onEdit: (project: LongFormProject) => void;
   onPublish: (projectId: string, scheduledPublishAt: string | null) => Promise<boolean>;
-  getLastScheduledTime: (channelId: string | null) => Promise<Date | null>;
+  getLastScheduledTime: (channelId: string | null, longFormOnly?: boolean) => Promise<Date | null>;
 }
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ComponentType<any> }> = {
