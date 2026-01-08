@@ -330,9 +330,12 @@ export function useLongFormProjects() {
 
       if (uploadError) throw uploadError;
 
-      // Update project with voiceover path
+      // Update project with voiceover path (and invalidate any previously rendered video)
       await updateProject(projectId, {
         voiceover_path: filePath,
+        final_video_path: null,
+        processing_progress: 0,
+        error_message: null,
         status: 'voiceover_ready',
       });
 
