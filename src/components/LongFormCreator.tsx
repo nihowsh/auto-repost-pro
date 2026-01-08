@@ -349,6 +349,12 @@ export function LongFormCreator() {
       let status = 'draft';
       if (script) status = 'script_ready';
 
+      // If we changed background music on an already-rendered project, invalidate the existing render
+      // so Preview can never show an outdated (no-music) final.mp4.
+      const shouldInvalidateRenderedVideo =
+        !!editingProject?.final_video_path &&
+        (editingProject.background_music_url || null) !== (bgMusicUrl || null);
+
       const projectData = {
         topic,
         target_duration_seconds: targetDuration * 60,
@@ -372,7 +378,12 @@ export function LongFormCreator() {
         scheduling_mode: schedulingMode,
         scheduling_delay: schedulingDelay,
         scheduled_publish_at: schedulingMode === 'manual' && scheduledDate ? new Date(scheduledDate).toISOString() : null,
-        status,
+        status: shouldInvalidateRenderedVideo
+          ? (editingProject?.voiceover_path || voiceoverFile ? 'voiceover_ready' : status)
+          : status,
+        ...(shouldInvalidateRenderedVideo
+          ? { final_video_path: null, processing_progress: 0, error_message: null }
+          : {}),
       };
 
       let projectId: string;
