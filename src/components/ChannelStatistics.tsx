@@ -1,9 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useYouTubeChannel, YouTubeChannel } from '@/hooks/useYouTubeChannel';
 import { useYouTubeAnalytics, ChannelStats, AnalyticsRow, VideoAnalytics } from '@/hooks/useYouTubeAnalytics';
-import { Card, CardContent } from '@/components/ui/card';
+import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -11,106 +10,124 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { GrowthTrendChart } from './stats/GrowthTrendChart';
-import { YPPEligibilityTracker } from './stats/YPPEligibilityTracker';
-import { TopPerformers } from './stats/TopPerformers';
-import { VideoComparison } from './stats/VideoComparison';
-import { ChannelComparison } from './stats/ChannelComparison';
-import {
-  BarChart3,
-  Users,
-  Eye,
-  Clock,
-  TrendingUp,
-  TrendingDown,
-  Film,
-  Video,
-  RefreshCw,
-  Loader2,
-} from 'lucide-react';
+import { StatsOverview, TimePeriod } from './stats/StatsOverview';
+import { ChannelAnalyticsView } from './stats/ChannelAnalyticsView';
+import { EnhancedComparison } from './stats/EnhancedComparison';
+import { BarChart3, RefreshCw, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
-import { subDays } from 'date-fns';
-
-type ContentFilter = 'all' | 'long' | 'short';
-type DateRange = '7d' | '28d' | '90d' | '365d';
+import { subDays, subMonths, subHours } from 'date-fns';
 
 interface ChannelWithStats extends YouTubeChannel {
   stats?: ChannelStats;
+  analytics?: AnalyticsRow[];
 }
 
 export function ChannelStatistics() {
-  const { channels, selectedChannelId, selectChannel } = useYouTubeChannel();
+  const { channels } = useYouTubeChannel();
   const { loading, error, fetchChannelStats, fetchAnalyticsReport, fetchTopVideos } = useYouTubeAnalytics();
-  const [contentFilter, setContentFilter] = useState<ContentFilter>('all');
-  const [dateRange, setDateRange] = useState<DateRange>('7d');
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>('7d');
   const [refreshing, setRefreshing] = useState(false);
+  const [viewMode, setViewMode] = useState<'overview' | 'channel' | 'compare'>('overview');
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
   // Data states
-  const [channelStats, setChannelStats] = useState<Record<string, ChannelStats>>({});
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsRow[]>([]);
-  const [topVideos, setTopVideos] = useState<VideoAnalytics[]>([]);
+  const [channelsWithStats, setChannelsWithStats] = useState<ChannelWithStats[]>([]);
+  const [allTopVideos, setAllTopVideos] = useState<VideoAnalytics[]>([]);
+  const [channelTopVideos, setChannelTopVideos] = useState<VideoAnalytics[]>([]);
+  const [scheduledVideos, setScheduledVideos] = useState<{ id: string; title: string; scheduled_publish_at: string }[]>([]);
 
   const selectedChannel = useMemo(() => {
-    return channels.find(c => c.id === selectedChannelId) || channels[0] || null;
-  }, [channels, selectedChannelId]);
+    return channelsWithStats.find(c => c.id === selectedChannelId) || null;
+  }, [channelsWithStats, selectedChannelId]);
 
-  const channelsWithStats: ChannelWithStats[] = useMemo(() => {
-    return channels.map(c => ({ ...c, stats: channelStats[c.id] }));
-  }, [channels, channelStats]);
-
-  const topChannels = useMemo(() => {
-    return [...channelsWithStats]
-      .filter(c => c.stats)
-      .sort((a, b) => (b.stats?.viewCount || 0) - (a.stats?.viewCount || 0));
-  }, [channelsWithStats]);
-
-  const dateRanges: { id: DateRange; label: string; days: number }[] = [
-    { id: '7d', label: '7 Days', days: 7 },
-    { id: '28d', label: '28 Days', days: 28 },
-    { id: '90d', label: '90 Days', days: 90 },
-    { id: '365d', label: '1 Year', days: 365 },
-  ];
+  const getDateRange = (period: TimePeriod): { start: Date; end: Date } => {
+    const end = new Date();
+    let start: Date;
+    switch (period) {
+      case '1h': start = subHours(end, 1); break;
+      case '24h': start = subHours(end, 24); break;
+      case '7d': start = subDays(end, 7); break;
+      case '28d': start = subDays(end, 28); break;
+      case '6m': start = subMonths(end, 6); break;
+      case 'all': start = subDays(end, 365); break; // Max 1 year for API
+      default: start = subDays(end, 7);
+    }
+    return { start, end };
+  };
 
   const loadData = async () => {
-    if (!selectedChannel) return;
+    if (channels.length === 0) return;
     setRefreshing(true);
 
-    const days = dateRanges.find(r => r.id === dateRange)?.days || 7;
-    const endDate = new Date();
-    const startDate = subDays(endDate, days);
+    const { start, end } = getDateRange(timePeriod);
+    const updatedChannels: ChannelWithStats[] = [];
+    let combinedVideos: VideoAnalytics[] = [];
 
-    // Fetch all data in parallel
-    const [stats, analytics, videos] = await Promise.all([
-      fetchChannelStats(selectedChannel.id),
-      fetchAnalyticsReport(selectedChannel.id, startDate, endDate),
-      fetchTopVideos(selectedChannel.id, startDate, endDate),
-    ]);
+    // Fetch data for all channels in parallel
+    await Promise.all(channels.map(async (ch) => {
+      const [stats, analytics, videos] = await Promise.all([
+        fetchChannelStats(ch.id),
+        fetchAnalyticsReport(ch.id, start, end),
+        fetchTopVideos(ch.id, start, end),
+      ]);
+      updatedChannels.push({ ...ch, stats: stats || undefined, analytics: analytics || undefined });
+      if (videos) combinedVideos = [...combinedVideos, ...videos];
+    }));
 
-    if (stats) {
-      setChannelStats(prev => ({ ...prev, [selectedChannel.id]: stats }));
-    }
-    if (analytics) setAnalyticsData(analytics);
-    if (videos) setTopVideos(videos);
+    // Sort combined videos by views and take top 10
+    combinedVideos.sort((a, b) => b.views - a.views);
+    setAllTopVideos(combinedVideos.slice(0, 10));
+    setChannelsWithStats(updatedChannels);
 
-    // Also fetch stats for all other channels for comparison
-    for (const ch of channels) {
-      if (ch.id !== selectedChannel.id && !channelStats[ch.id]) {
-        const chStats = await fetchChannelStats(ch.id);
-        if (chStats) {
-          setChannelStats(prev => ({ ...prev, [ch.id]: chStats }));
-        }
-      }
+    // If a channel is selected, load its specific data
+    if (selectedChannelId) {
+      await loadChannelData(selectedChannelId);
     }
 
     setRefreshing(false);
   };
 
+  const loadChannelData = async (channelId: string) => {
+    const { start, end } = getDateRange(timePeriod);
+    const videos = await fetchTopVideos(channelId, start, end);
+    if (videos) setChannelTopVideos(videos);
+
+    // Fetch scheduled videos for this channel
+    const { data: scheduled } = await supabase
+      .from('videos')
+      .select('id, title, scheduled_publish_at')
+      .eq('channel_id', channelId)
+      .eq('status', 'scheduled')
+      .not('scheduled_publish_at', 'is', null)
+      .order('scheduled_publish_at', { ascending: true })
+      .limit(10);
+
+    const { data: scheduledLongform } = await supabase
+      .from('long_form_projects')
+      .select('id, youtube_title, scheduled_publish_at')
+      .eq('channel_id', channelId)
+      .eq('status', 'scheduled')
+      .not('scheduled_publish_at', 'is', null)
+      .order('scheduled_publish_at', { ascending: true })
+      .limit(10);
+
+    const allScheduled = [
+      ...(scheduled || []).map(v => ({ id: v.id, title: v.title || 'Untitled', scheduled_publish_at: v.scheduled_publish_at! })),
+      ...(scheduledLongform || []).map(v => ({ id: v.id, title: v.youtube_title || 'Untitled', scheduled_publish_at: v.scheduled_publish_at! })),
+    ].sort((a, b) => new Date(a.scheduled_publish_at).getTime() - new Date(b.scheduled_publish_at).getTime());
+
+    setScheduledVideos(allScheduled);
+  };
+
   useEffect(() => {
     loadData();
-  }, [selectedChannel?.id, dateRange]);
+  }, [channels.length, timePeriod]);
 
-  const currentStats = selectedChannel ? channelStats[selectedChannel.id] : null;
-  const watchTimeHours = analyticsData.reduce((sum, r) => sum + r.watchTimeMinutes / 60, 0);
+  useEffect(() => {
+    if (selectedChannelId && viewMode === 'channel') {
+      loadChannelData(selectedChannelId);
+    }
+  }, [selectedChannelId, viewMode]);
 
   if (channels.length === 0) {
     return (
@@ -128,56 +145,42 @@ export function ChannelStatistics() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <Select value={selectedChannel?.id || ''} onValueChange={selectChannel}>
-            <SelectTrigger className="w-[240px]">
-              <SelectValue placeholder="Select channel" />
-            </SelectTrigger>
-            <SelectContent>
-              {channels.map((channel) => (
-                <SelectItem key={channel.id} value={channel.id}>
-                  <div className="flex items-center gap-2">
-                    {channel.channel_thumbnail && (
-                      <img src={channel.channel_thumbnail} alt="" className="w-5 h-5 rounded-full" />
-                    )}
-                    <span className="truncate max-w-[180px]">{channel.channel_title}</span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
+        <div className="flex items-center gap-2">
           <div className="flex gap-1 p-1 bg-card border border-border rounded-lg">
             {[
-              { id: 'all' as const, label: 'All', icon: BarChart3 },
-              { id: 'long' as const, label: 'Long', icon: Film },
-              { id: 'short' as const, label: 'Shorts', icon: Video },
-            ].map((filter) => (
+              { id: 'overview' as const, label: 'Overview' },
+              { id: 'channel' as const, label: 'Channel' },
+              { id: 'compare' as const, label: 'Compare' },
+            ].map((mode) => (
               <button
-                key={filter.id}
-                onClick={() => setContentFilter(filter.id)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  contentFilter === filter.id
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                key={mode.id}
+                onClick={() => setViewMode(mode.id)}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === mode.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                 }`}
               >
-                <filter.icon className="w-4 h-4" />
-                {filter.label}
+                {mode.label}
               </button>
             ))}
           </div>
 
-          <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRange)}>
-            <SelectTrigger className="w-[120px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {dateRanges.map((r) => (
-                <SelectItem key={r.id} value={r.id}>{r.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {viewMode === 'channel' && (
+            <Select value={selectedChannelId || ''} onValueChange={setSelectedChannelId}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Select channel" />
+              </SelectTrigger>
+              <SelectContent>
+                {channels.map((channel) => (
+                  <SelectItem key={channel.id} value={channel.id}>
+                    <div className="flex items-center gap-2">
+                      {channel.channel_thumbnail && <img src={channel.channel_thumbnail} alt="" className="w-5 h-5 rounded-full" />}
+                      <span className="truncate max-w-[150px]">{channel.channel_title}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         <Button variant="outline" size="sm" onClick={loadData} disabled={refreshing}>
@@ -186,64 +189,44 @@ export function ChannelStatistics() {
         </Button>
       </div>
 
-      {error && (
-        <Badge variant="destructive">{error}</Badge>
+      {error && <Badge variant="destructive">{error}</Badge>}
+
+      {/* Content Views */}
+      {viewMode === 'overview' && (
+        <StatsOverview
+          channels={channelsWithStats}
+          topVideos={allTopVideos}
+          timePeriod={timePeriod}
+          onTimePeriodChange={setTimePeriod}
+          loading={loading || refreshing}
+        />
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatsCard title="Subscribers" value={currentStats?.subscriberCount?.toLocaleString() || '-'} icon={Users} />
-        <StatsCard title="Total Views" value={currentStats?.viewCount?.toLocaleString() || '-'} icon={Eye} />
-        <StatsCard title="Videos" value={currentStats?.videoCount?.toLocaleString() || '-'} icon={Video} />
-        <StatsCard title="Watch Time" value={watchTimeHours > 0 ? `${Math.round(watchTimeHours).toLocaleString()}h` : '-'} icon={Clock} />
-      </div>
+      {viewMode === 'channel' && selectedChannel && (
+        <ChannelAnalyticsView
+          channel={selectedChannel}
+          stats={selectedChannel.stats || null}
+          analytics={selectedChannel.analytics || []}
+          topVideos={channelTopVideos}
+          scheduledVideos={scheduledVideos}
+          loading={loading || refreshing}
+        />
+      )}
 
-      {/* Top Performers */}
-      <TopPerformers topVideos={topVideos} topChannels={topChannels} loading={loading} />
-
-      {/* Tabs */}
-      <Tabs defaultValue="growth" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="growth">Growth</TabsTrigger>
-          <TabsTrigger value="videos">Video Comparison</TabsTrigger>
-          <TabsTrigger value="channels">Channel Comparison</TabsTrigger>
-          <TabsTrigger value="ypp">YPP Eligibility</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="growth">
-          <GrowthTrendChart data={analyticsData} loading={loading} />
-        </TabsContent>
-
-        <TabsContent value="videos">
-          <VideoComparison availableVideos={topVideos} loading={loading} />
-        </TabsContent>
-
-        <TabsContent value="channels">
-          <ChannelComparison channels={channelsWithStats} loading={loading} />
-        </TabsContent>
-
-        <TabsContent value="ypp">
-          <YPPEligibilityTracker
-            subscriberCount={currentStats?.subscriberCount || 0}
-            watchTimeHours={watchTimeHours}
-            loading={loading}
-          />
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-function StatsCard({ title, value, icon: Icon }: { title: string; value: string; icon: React.ComponentType<{ className?: string }> }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-muted-foreground">{title}</span>
-          <Icon className="w-4 h-4 text-muted-foreground" />
+      {viewMode === 'channel' && !selectedChannel && (
+        <div className="glass-card p-12 text-center">
+          <BarChart3 className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+          <p className="text-muted-foreground">Select a channel to view detailed analytics</p>
         </div>
-        <div className="text-2xl font-bold">{value}</div>
-      </CardContent>
-    </Card>
+      )}
+
+      {viewMode === 'compare' && (
+        <EnhancedComparison
+          channels={channelsWithStats}
+          availableVideos={allTopVideos}
+          loading={loading || refreshing}
+        />
+      )}
+    </div>
   );
 }
