@@ -340,7 +340,9 @@ export function LongFormCreator() {
       const selectedTrack = allTracks.find(t => t.id === selectedTrackId);
 
       let bgMusicStoragePath = '';
-      let bgMusicSource: 'bundled' | 'user' = 'bundled';
+      // DB constraint allows: 'manual', 'auto', 'pixabay', 'mixkit'
+      // We use 'manual' for bundled/user-uploaded tracks (manual selection)
+      let bgMusicSource: 'manual' | 'auto' | 'pixabay' | 'mixkit' = 'manual';
 
       if (selectedTrack) {
         if (selectedTrack.source === 'bundled') {
@@ -358,7 +360,7 @@ export function LongFormCreator() {
 
           // Store the PATH, not the URL
           bgMusicStoragePath = bundledPath;
-          bgMusicSource = 'bundled';
+          bgMusicSource = 'manual'; // bundled tracks are manually selected
         } else {
           // User track: extract file_path from the track data
           // userTracks come from useBackgroundMusic which maps file_path to url via getPublicUrl
@@ -374,7 +376,7 @@ export function LongFormCreator() {
           } else {
             throw new Error('Could not find user track file path');
           }
-          bgMusicSource = 'user';
+          bgMusicSource = 'manual'; // user-uploaded tracks are manually selected
         }
       }
 
