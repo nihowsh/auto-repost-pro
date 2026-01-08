@@ -277,14 +277,34 @@ export function LongFormCreator() {
       }
 
       const data = response.data;
-      setYoutubeTitle(data.title);
-      setYoutubeDescription(data.description);
-      setYoutubeTags(data.tags?.join(', ') || '');
-      if (data.chapters?.length > 0) {
-        setScriptChapters(data.chapters);
+      const generatedTitle = data.title || '';
+      const generatedDescription = data.description || '';
+      const generatedTags = data.tags?.join(', ') || '';
+      const generatedChapters = data.chapters || [];
+
+      setYoutubeTitle(generatedTitle);
+      setYoutubeDescription(generatedDescription);
+      setYoutubeTags(generatedTags);
+      if (generatedChapters.length > 0) {
+        setScriptChapters(generatedChapters);
       }
 
-      toast({ title: 'Metadata generated', description: 'Title, description, and tags have been generated' });
+      // IMMEDIATELY PERSIST metadata to DB if we're editing an existing project
+      if (editingProject) {
+        const normalizedTags = generatedTags
+          ? generatedTags.split(',').map((t: string) => t.trim()).filter(Boolean)
+          : null;
+
+        await updateProject(editingProject.id, {
+          youtube_title: generatedTitle || null,
+          youtube_description: generatedDescription || null,
+          youtube_tags: normalizedTags && normalizedTags.length > 0 ? normalizedTags : null,
+          youtube_chapters: generatedChapters.length > 0 ? generatedChapters : null,
+        });
+        console.log('✅ Metadata persisted to DB immediately');
+      }
+
+      toast({ title: 'Metadata generated', description: 'Title, description, and tags have been generated and saved' });
     } catch (error: any) {
       console.error('Error generating metadata:', error);
       toast({
@@ -311,20 +331,20 @@ export function LongFormCreator() {
 
     setIsSaving(true);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
       // Determine background music from selected track
+      // CRITICAL: We store STORAGE PATHS (not URLs) so the runner can reliably download via service key
       const allTracks = [...getBundledTracks(), ...userTracks];
       const selectedTrack = allTracks.find(t => t.id === selectedTrackId);
 
-      let bgMusicUrl = '';
+      let bgMusicStoragePath = '';
       let bgMusicSource: 'bundled' | 'user' = 'bundled';
 
       if (selectedTrack) {
         if (selectedTrack.source === 'bundled') {
-          // IMPORTANT: the local runner cannot reliably fetch from the app's origin.
-          // So we mirror bundled tracks into the backend "background-music" bucket and save that public URL.
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) throw new Error('Not authenticated');
-
+          // Upload bundled track to storage and store the PATH (not URL)
           const bundledPath = `${user.id}/bundled/${selectedTrack.id}.mp3`;
 
           const res = await fetch(selectedTrack.url);
@@ -336,13 +356,31 @@ export function LongFormCreator() {
             .upload(bundledPath, blob, { upsert: true, contentType: 'audio/mpeg' });
           if (upErr) throw upErr;
 
-          const { data: pub } = supabase.storage.from('background-music').getPublicUrl(bundledPath);
-          bgMusicUrl = pub.publicUrl;
+          // Store the PATH, not the URL
+          bgMusicStoragePath = bundledPath;
           bgMusicSource = 'bundled';
         } else {
-          bgMusicUrl = selectedTrack.url;
+          // User track: extract file_path from the track data
+          // userTracks come from useBackgroundMusic which maps file_path to url via getPublicUrl
+          // We need the original file_path, so we query it
+          const { data: trackRow } = await supabase
+            .from('background_music_tracks')
+            .select('file_path')
+            .eq('id', selectedTrack.id)
+            .single();
+          
+          if (trackRow?.file_path) {
+            bgMusicStoragePath = trackRow.file_path;
+          } else {
+            throw new Error('Could not find user track file path');
+          }
           bgMusicSource = 'user';
         }
+      }
+
+      // VALIDATION: If user selected a track but we couldn't get a storage path, block save
+      if (selectedTrackId && !bgMusicStoragePath) {
+        throw new Error('Background music selected but could not be saved. Please try again.');
       }
 
       // Determine status based on what's complete
@@ -350,10 +388,14 @@ export function LongFormCreator() {
       if (script) status = 'script_ready';
 
       // If we changed background music on an already-rendered project, invalidate the existing render
-      // so Preview can never show an outdated (no-music) final.mp4.
       const shouldInvalidateRenderedVideo =
         !!editingProject?.final_video_path &&
-        (editingProject.background_music_url || null) !== (bgMusicUrl || null);
+        (editingProject.background_music_url || null) !== (bgMusicStoragePath || null);
+
+      // Normalize tags: filter out empty strings
+      const normalizedTags = youtubeTags
+        ? youtubeTags.split(',').map(t => t.trim()).filter(Boolean)
+        : null;
 
       const projectData = {
         topic,
@@ -362,12 +404,12 @@ export function LongFormCreator() {
         reference_urls: validUrls,
         script: script || null,
         script_source: useAiScript ? 'ai_generated' : 'manual',
-        background_music_url: bgMusicUrl || null,
+        background_music_url: bgMusicStoragePath || null,
         background_music_source: bgMusicSource,
         background_music_category: null,
         youtube_title: youtubeTitle || null,
         youtube_description: youtubeDescription || null,
-        youtube_tags: youtubeTags ? youtubeTags.split(',').map(t => t.trim()) : null,
+        youtube_tags: normalizedTags && normalizedTags.length > 0 ? normalizedTags : null,
         youtube_chapters: scriptChapters.length > 0 ? scriptChapters : null,
         youtube_category: youtubeCategory,
         youtube_privacy: youtubePrivacy,
@@ -417,6 +459,30 @@ export function LongFormCreator() {
       // Upload thumbnail if provided
       if (thumbnailFile) {
         await uploadThumbnail(projectId, thumbnailFile);
+      }
+
+      // VERIFICATION: Re-read the saved project and confirm critical fields are set
+      const { data: savedProject, error: readErr } = await supabase
+        .from('long_form_projects')
+        .select('background_music_url, youtube_title, youtube_description, youtube_tags')
+        .eq('id', projectId)
+        .single();
+
+      if (readErr) {
+        console.error('Failed to verify save:', readErr);
+      } else {
+        // Log for debugging
+        console.log('✅ Verified saved project:', {
+          background_music_url: savedProject.background_music_url,
+          youtube_title: savedProject.youtube_title,
+          youtube_description: savedProject.youtube_description ? '(set)' : null,
+          youtube_tags: savedProject.youtube_tags,
+        });
+
+        // Warn if music was selected but didn't persist
+        if (selectedTrackId && !savedProject.background_music_url) {
+          throw new Error('BG music was selected but failed to save to database. Please try again.');
+        }
       }
 
       toast({ title: 'Project saved', description: 'Your project has been saved' });

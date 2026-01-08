@@ -111,7 +111,11 @@ export function LongFormPublishDialog({
     return null;
   };
 
+  // Check if metadata is missing
+  const missingMetadata = !project.youtube_title || !project.youtube_description;
+
   const handlePublish = async () => {
+    if (missingMetadata) return;
     setPublishing(true);
     const scheduledAt = calculateScheduledTime();
     const success = await onPublish(project.id, scheduledAt);
@@ -255,11 +259,17 @@ export function LongFormPublishDialog({
           </div>
         </div>
 
+        {missingMetadata && (
+          <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm text-destructive">
+            <strong>Missing metadata:</strong> Please go back and generate or enter a title and description before uploading.
+          </div>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handlePublish} disabled={publishing}>
+          <Button onClick={handlePublish} disabled={publishing || missingMetadata}>
             {publishing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />

@@ -152,7 +152,7 @@ export function LongFormProjectsList({
                     {project.brief_description || `${project.reference_urls.length} reference videos`}
                   </p>
 
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                     <span className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
                       {formatDuration(project.target_duration_seconds)}
@@ -163,6 +163,16 @@ export function LongFormProjectsList({
                     )}
                     {project.voiceover_path && (
                       <span className="text-green-500">✓ Voiceover</span>
+                    )}
+                    {project.background_music_url ? (
+                      <span className="text-green-500">✓ BG Music</span>
+                    ) : (
+                      <span className="text-muted-foreground/60">— No Music</span>
+                    )}
+                    {project.youtube_title && project.youtube_description ? (
+                      <span className="text-green-500">✓ Metadata</span>
+                    ) : (
+                      <span className="text-muted-foreground/60">— No Metadata</span>
                     )}
                   </div>
 
