@@ -234,25 +234,24 @@ export function useLongFormProjects() {
 
       if (updateError) throw updateError;
 
-      // Trigger the longform-worker
-      const { error: invokeError } = await supabase.functions.invoke('longform-worker', {
+      // Trigger the longform-worker - fire and forget since large uploads can timeout
+      // The worker continues in the background and updates DB status when done
+      supabase.functions.invoke('longform-worker', {
         body: { project_id: projectId },
+      }).then(({ error: invokeError }) => {
+        if (invokeError) {
+          // Only log - status is tracked via realtime subscription
+          console.warn('Edge function response error (may be timeout, upload continues in background):', invokeError);
+        }
+      }).catch((err) => {
+        console.warn('Edge function call error (upload may continue in background):', err);
       });
-
-      if (invokeError) {
-        // Revert status on failure
-        await supabase
-          .from('long_form_projects')
-          .update({ status: 'ready_for_review' })
-          .eq('id', projectId);
-        throw invokeError;
-      }
 
       toast({
         title: scheduledPublishAt ? 'Video scheduled' : 'Upload started',
         description: scheduledPublishAt
           ? 'Your video will be published at the scheduled time'
-          : 'Your video is being uploaded to YouTube',
+          : 'Your video is being uploaded to YouTube. This may take a few minutes.',
       });
 
       await fetchProjects();
