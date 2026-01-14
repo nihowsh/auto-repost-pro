@@ -27,6 +27,46 @@ async function publishDueVideos() {
   const now = new Date().toISOString();
   console.log(`[scheduled-publisher] Running at ${now}`);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Self-healing: requeue stuck uploads + clear expired locks
+  // This prevents videos from getting permanently stuck in 'uploading' if a
+  // worker instance crashes / times out mid-run.
+  // ─────────────────────────────────────────────────────────────────────────
+  try {
+    const stuckCutoff = new Date(Date.now() - 45 * 60 * 1000).toISOString(); // 45 minutes
+
+    // 1) Re-queue videos that have been in 'uploading' too long and are already due.
+    const { error: healErr, count: healedCount } = await supabase
+      .from("videos")
+      .update({ status: "scheduled" }, { count: "exact" })
+      .eq("status", "uploading")
+      .not("video_file_path", "is", null)
+      .lte("scheduled_publish_at", now)
+      .lt("updated_at", stuckCutoff);
+
+    if (healErr) {
+      console.warn("[scheduled-publisher] Heal (requeue stuck uploads) warning:", healErr);
+    } else if ((healedCount ?? 0) > 0) {
+      console.log(
+        `[scheduled-publisher] Re-queued ${healedCount} stuck 'uploading' videos back to 'scheduled'`
+      );
+    }
+
+    // 2) Clear any expired locks that never got released.
+    const lockExpiryCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10 minutes
+    const { error: lockHealErr } = await supabase
+      .from("channel_upload_locks")
+      .update({ locked_by_video_id: null, locked_until: now, updated_at: now })
+      .not("locked_by_video_id", "is", null)
+      .lt("locked_until", lockExpiryCutoff);
+
+    if (lockHealErr) {
+      console.warn("[scheduled-publisher] Heal (clear expired locks) warning:", lockHealErr);
+    }
+  } catch (err) {
+    console.warn("[scheduled-publisher] Heal step failed (continuing):", err);
+  }
+
   // Find due videos - scheduled and ready to publish
   const { data: dueVideos, error: queryError } = await supabase
     .from("videos")
