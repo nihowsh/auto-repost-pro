@@ -35,13 +35,14 @@ async function publishDueVideos() {
   try {
     const stuckCutoff = new Date(Date.now() - 45 * 60 * 1000).toISOString(); // 45 minutes
 
-    // 1) Re-queue videos that have been in 'uploading' too long and are already due.
+    // 1) Re-queue videos that have been in 'uploading' too long.
+    // NOTE: We do NOT require scheduled_publish_at <= now here.
+    // If something is stuck in 'uploading' for 45+ minutes, it is safer to re-queue.
     const { error: healErr, count: healedCount } = await supabase
       .from("videos")
       .update({ status: "scheduled" }, { count: "exact" })
       .eq("status", "uploading")
       .not("video_file_path", "is", null)
-      .lte("scheduled_publish_at", now)
       .lt("updated_at", stuckCutoff);
 
     if (healErr) {

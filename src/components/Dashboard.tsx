@@ -10,6 +10,7 @@ import { ApiKeyManager } from './ApiKeyManager';
 import { ChannelScheduleInfo } from './ChannelScheduleInfo';
 import { LongFormCreator } from './LongFormCreator';
 import { ChannelStatistics } from './ChannelStatistics';
+import { PipelineHealthBar } from './PipelineHealthBar';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -88,7 +89,9 @@ export function Dashboard() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
+    <div className="max-w-5xl mx-auto px-4 py-8 space-y-4">
+      <PipelineHealthBar />
+
       {/* Channel Schedule Info */}
       <ChannelScheduleInfo channels={channels} />
 
