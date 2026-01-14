@@ -374,18 +374,25 @@ async function processVideo(videoId: string) {
   // Get channel
   const channelId = video.channel_id as string | null;
   let channelQuery = supabase.from("youtube_channels").select("*");
-  
+
   if (channelId) {
     channelQuery = channelQuery.eq("id", channelId);
   } else {
     channelQuery = channelQuery.eq("user_id", userId).eq("is_active", true);
   }
-  
+
   const { data: channel, error: chErr } = await channelQuery.maybeSingle();
 
   if (chErr || !channel) {
     console.error("No channel found for video", chErr);
     await updateVideoStatus(videoId, "failed", { error_message: "No connected YouTube channel" });
+    return;
+  }
+
+  if (channel.is_active === false) {
+    await updateVideoStatus(videoId, "failed", {
+      error_message: "Channel authorization expired/revoked. Please reconnect this channel.",
+    });
     return;
   }
 
@@ -396,9 +403,11 @@ async function processVideo(videoId: string) {
   // If locked or rate-limited, requeue the video for later
   // ─────────────────────────────────────────────────────────────────────────
   const lockAcquired = await tryAcquireLock(resolvedChannelId, videoId);
-  
+
   if (!lockAcquired) {
-    console.log(`Cannot process video ${videoId} now - channel ${resolvedChannelId} is rate-limited or locked. Reverting to 'scheduled' for CRON retry.`);
+    console.log(
+      `Cannot process video ${videoId} now - channel ${resolvedChannelId} is rate-limited or locked. Reverting to 'scheduled' for CRON retry.`
+    );
     // Revert to 'scheduled' status so CRON will pick it up again later
     await updateVideoStatus(videoId, "scheduled");
     return;
@@ -412,13 +421,38 @@ async function processVideo(videoId: string) {
 
   if (!Number.isFinite(expiresAt) || expiresAt - now < 120_000) {
     console.log("Refreshing Google token...");
-    const refreshed = await refreshGoogleAccessToken(refreshToken);
-    accessToken = refreshed.access_token;
-    const newExpiresAt = new Date(now + refreshed.expires_in * 1000).toISOString();
-    await supabase
-      .from("youtube_channels")
-      .update({ access_token: accessToken, token_expires_at: newExpiresAt })
-      .eq("id", channel.id);
+    try {
+      const refreshed = await refreshGoogleAccessToken(refreshToken);
+      accessToken = refreshed.access_token;
+      const newExpiresAt = new Date(now + refreshed.expires_in * 1000).toISOString();
+      await supabase
+        .from("youtube_channels")
+        .update({ access_token: accessToken, token_expires_at: newExpiresAt })
+        .eq("id", channel.id);
+    } catch (err) {
+      const msg = (err as Error)?.message || String(err);
+      const isInvalidGrant = msg.includes("invalid_grant");
+
+      if (isInvalidGrant) {
+        console.error("Channel token revoked/expired (invalid_grant). Marking channel inactive.");
+        await supabase.from("youtube_channels").update({ is_active: false }).eq("id", channel.id);
+
+        await updateVideoStatus(videoId, "failed", {
+          error_message:
+            "Channel authorization expired/revoked (invalid_grant). Reconnect this channel to resume uploads.",
+        });
+
+        await releaseLock(resolvedChannelId, videoId);
+        return;
+      }
+
+      // Unknown refresh error: fail this run but keep channel active.
+      await updateVideoStatus(videoId, "failed", {
+        error_message: `Token refresh failed: ${msg}`,
+      });
+      await releaseLock(resolvedChannelId, videoId);
+      return;
+    }
   }
 
   // Download video from storage
