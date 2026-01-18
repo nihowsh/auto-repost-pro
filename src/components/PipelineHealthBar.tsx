@@ -14,8 +14,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { AlertCircle, RefreshCw } from "lucide-react";
 
+interface DisconnectedChannel {
+  id: string;
+  channel_title: string;
+  channel_thumbnail: string | null;
+}
+
 type Health = {
-  disconnectedChannels: number;
+  disconnectedChannels: DisconnectedChannel[];
   stuckUploading: number;
   recentAuthFailures: number;
   sampleFailures: { id: string; title: string; error_message: string; updated_at: string }[];
@@ -37,7 +43,10 @@ export function PipelineHealthBar() {
       const stuckCutoff = new Date(now - STUCK_UPLOAD_MINUTES * 60 * 1000).toISOString();
 
       const [channelsRes, stuckRes, failedRes] = await Promise.all([
-        supabase.from("youtube_channels").select("id", { count: "exact", head: true }).eq("is_active", false),
+        supabase
+          .from("youtube_channels")
+          .select("id, channel_title, channel_thumbnail")
+          .eq("is_active", false),
         supabase
           .from("videos")
           .select("id", { count: "exact", head: true })
@@ -52,7 +61,11 @@ export function PipelineHealthBar() {
           .limit(8),
       ]);
 
-      const disconnectedChannels = channelsRes.count ?? 0;
+      const disconnectedChannels: DisconnectedChannel[] = (channelsRes.data ?? []).map((c) => ({
+        id: c.id,
+        channel_title: c.channel_title,
+        channel_thumbnail: c.channel_thumbnail,
+      }));
       const stuckUploading = stuckRes.count ?? 0;
       const authFailures = failedRes.data ?? [];
 
@@ -80,7 +93,7 @@ export function PipelineHealthBar() {
   }, [user?.id]);
 
   const hasIssue = Boolean(
-    (health?.disconnectedChannels ?? 0) > 0 ||
+    (health?.disconnectedChannels?.length ?? 0) > 0 ||
       (health?.stuckUploading ?? 0) > 0 ||
       (health?.recentAuthFailures ?? 0) > 0
   );
@@ -88,7 +101,10 @@ export function PipelineHealthBar() {
   const summary = useMemo(() => {
     if (!health) return null;
     const parts: string[] = [];
-    if (health.disconnectedChannels > 0) parts.push(`${health.disconnectedChannels} channel(s) need reconnect`);
+    if (health.disconnectedChannels.length > 0) {
+      const names = health.disconnectedChannels.map((c) => c.channel_title).join(", ");
+      parts.push(`${health.disconnectedChannels.length} channel(s) need reconnect (${names})`);
+    }
     if (health.recentAuthFailures > 0) parts.push(`${health.recentAuthFailures} auth failure(s)`);
     if (health.stuckUploading > 0) parts.push(`${health.stuckUploading} stuck upload(s)`);
     return parts.join(" • ");
@@ -139,14 +155,37 @@ export function PipelineHealthBar() {
             <AlertDialogTitle>What happened?</AlertDialogTitle>
             <AlertDialogDescription>
               The uploader is hitting Google token refresh errors ("invalid_grant") for some channels, meaning the channel access was revoked/expired.
-              Those videos can’t upload until you reconnect the channel.
+              Those videos can't upload until you reconnect the channel.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="space-y-2">
+          <div className="space-y-4">
+            {/* Disconnected channels list */}
+            {health?.disconnectedChannels && health.disconnectedChannels.length > 0 && (
+              <div className="rounded-lg border border-border bg-card p-3">
+                <p className="text-sm font-medium text-foreground mb-2">Disconnected Channels</p>
+                <div className="space-y-2">
+                  {health.disconnectedChannels.map((ch) => (
+                    <div key={ch.id} className="flex items-center gap-2">
+                      {ch.channel_thumbnail ? (
+                        <img
+                          src={ch.channel_thumbnail}
+                          alt=""
+                          className="w-6 h-6 rounded-full"
+                        />
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-muted" />
+                      )}
+                      <span className="text-sm text-foreground">{ch.channel_title}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {health?.sampleFailures?.length ? (
               <div className="rounded-lg border border-border bg-card p-3">
-                <p className="text-sm font-medium text-foreground mb-2">Examples</p>
+                <p className="text-sm font-medium text-foreground mb-2">Failed Video Examples</p>
                 <div className="space-y-2">
                   {health.sampleFailures.map((v) => (
                     <div key={v.id} className="text-xs">
