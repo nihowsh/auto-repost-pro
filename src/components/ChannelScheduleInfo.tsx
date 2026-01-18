@@ -1,12 +1,24 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { YouTubeChannel } from '@/hooks/useYouTubeChannel';
-import { Clock, Timer } from 'lucide-react';
-import { format } from 'date-fns';
+import { Clock, Timer, Trash2 } from 'lucide-react';
 import { CountdownTimer } from './CountdownTimer';
+import { Button } from './ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
 
 interface ChannelScheduleInfoProps {
   channels: YouTubeChannel[];
+  onVideosDeleted?: () => void;
 }
 
 interface ChannelNextUpload {
@@ -17,9 +29,12 @@ interface ChannelNextUpload {
   pendingCount: number;
 }
 
-export function ChannelScheduleInfo({ channels }: ChannelScheduleInfoProps) {
+export function ChannelScheduleInfo({ channels, onVideosDeleted }: ChannelScheduleInfoProps) {
   const [schedules, setSchedules] = useState<ChannelNextUpload[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [channelToDelete, setChannelToDelete] = useState<ChannelNextUpload | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const fetchSchedules = async () => {
@@ -30,36 +45,38 @@ export function ChannelScheduleInfo({ channels }: ChannelScheduleInfoProps) {
       }
 
       try {
-        // Get next scheduled video for each channel
-        const channelSchedules: ChannelNextUpload[] = [];
+        // Batch fetch all video counts and next scheduled times
+        const channelIds = channels.map((c) => c.id);
 
-        for (const channel of channels) {
-          // Get next scheduled video
-          const { data: nextVideo } = await supabase
-            .from('videos')
-            .select('scheduled_publish_at')
-            .eq('channel_id', channel.id)
-            .in('status', ['scheduled', 'pending_download', 'downloading', 'processing', 'uploading'])
-            .not('scheduled_publish_at', 'is', null)
-            .order('scheduled_publish_at', { ascending: true })
-            .limit(1)
-            .maybeSingle();
+        // Get all pending videos for all channels in one query
+        const { data: allVideos } = await supabase
+          .from('videos')
+          .select('id, channel_id, scheduled_publish_at')
+          .in('channel_id', channelIds)
+          .in('status', ['scheduled', 'pending_download', 'downloading', 'processing', 'uploading']);
 
-          // Get count of pending videos
-          const { count } = await supabase
-            .from('videos')
-            .select('*', { count: 'exact', head: true })
-            .eq('channel_id', channel.id)
-            .in('status', ['scheduled', 'pending_download', 'downloading', 'processing', 'uploading']);
+        // Process the data client-side
+        const channelSchedules: ChannelNextUpload[] = channels.map((channel) => {
+          const channelVideos = (allVideos || []).filter((v) => v.channel_id === channel.id);
+          const pendingCount = channelVideos.length;
 
-          channelSchedules.push({
+          // Find next scheduled video
+          const scheduledVideos = channelVideos
+            .filter((v) => v.scheduled_publish_at)
+            .sort((a, b) => 
+              new Date(a.scheduled_publish_at!).getTime() - new Date(b.scheduled_publish_at!).getTime()
+            );
+
+          const nextScheduledAt = scheduledVideos.length > 0 ? scheduledVideos[0].scheduled_publish_at : null;
+
+          return {
             channelId: channel.id,
             channelTitle: channel.channel_title,
             channelThumbnail: channel.channel_thumbnail,
-            nextScheduledAt: nextVideo?.scheduled_publish_at || null,
-            pendingCount: count || 0,
-          });
-        }
+            nextScheduledAt,
+            pendingCount,
+          };
+        });
 
         setSchedules(channelSchedules);
       } catch (err) {
@@ -75,6 +92,46 @@ export function ChannelScheduleInfo({ channels }: ChannelScheduleInfoProps) {
     const interval = setInterval(fetchSchedules, 60000);
     return () => clearInterval(interval);
   }, [channels]);
+
+  const handleDeleteClick = (schedule: ChannelNextUpload) => {
+    setChannelToDelete(schedule);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!channelToDelete) return;
+
+    setDeleting(true);
+    try {
+      const { error, count } = await supabase
+        .from('videos')
+        .delete({ count: 'exact' })
+        .eq('channel_id', channelToDelete.channelId)
+        .in('status', ['scheduled', 'pending_download', 'downloading', 'processing', 'uploading']);
+
+      if (error) throw error;
+
+      toast.success(`Deleted ${count || 0} scheduled videos from ${channelToDelete.channelTitle}`);
+      
+      // Update local state
+      setSchedules((prev) =>
+        prev.map((s) =>
+          s.channelId === channelToDelete.channelId
+            ? { ...s, pendingCount: 0, nextScheduledAt: null }
+            : s
+        )
+      );
+
+      onVideosDeleted?.();
+    } catch (err) {
+      console.error('Error deleting videos:', err);
+      toast.error('Failed to delete videos');
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+      setChannelToDelete(null);
+    }
+  };
 
   if (loading || schedules.length === 0) {
     return null;
@@ -98,7 +155,7 @@ export function ChannelScheduleInfo({ channels }: ChannelScheduleInfoProps) {
         {activeSchedules.map((schedule) => (
           <div
             key={schedule.channelId}
-            className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
+            className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 group"
           >
             {schedule.channelThumbnail ? (
               <img
@@ -127,9 +184,42 @@ export function ChannelScheduleInfo({ channels }: ChannelScheduleInfoProps) {
                 )}
               </div>
             </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={() => handleDeleteClick(schedule)}
+              title={`Delete all scheduled videos for ${schedule.channelTitle}`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
           </div>
         ))}
       </div>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all scheduled videos?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete all {channelToDelete?.pendingCount} queued/scheduled videos for{' '}
+              <span className="font-medium text-foreground">{channelToDelete?.channelTitle}</span>.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'Deleting...' : 'Delete all'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

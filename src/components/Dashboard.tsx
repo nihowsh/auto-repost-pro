@@ -93,7 +93,7 @@ export function Dashboard() {
       <PipelineHealthBar />
 
       {/* Channel Schedule Info */}
-      <ChannelScheduleInfo channels={channels} />
+      <ChannelScheduleInfo channels={channels} onVideosDeleted={refetchVideos} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="grid w-full grid-cols-8 bg-card border border-border rounded-xl p-1 h-auto">
