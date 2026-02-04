@@ -37,6 +37,7 @@ export function PipelineHealthBar() {
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectQueue, setReconnectQueue] = useState<DisconnectedChannel[]>([]);
   const [currentReconnectIndex, setCurrentReconnectIndex] = useState(0);
+  const [autoStartQueued, setAutoStartQueued] = useState(false);
 
   const loadHealth = async () => {
     if (!user) return;
@@ -119,6 +120,8 @@ export function PipelineHealthBar() {
     setReconnectQueue(health.disconnectedChannels);
     setCurrentReconnectIndex(0);
     setReconnecting(true);
+    // auto-start immediately (no per-channel click)
+    setAutoStartQueued(true);
   };
 
   const handleReconnectNext = async () => {
@@ -126,6 +129,7 @@ export function PipelineHealthBar() {
       setReconnecting(false);
       setReconnectQueue([]);
       setCurrentReconnectIndex(0);
+      setAutoStartQueued(false);
       return;
     }
 
@@ -160,9 +164,26 @@ export function PipelineHealthBar() {
         setReconnectQueue(queue);
         setCurrentReconnectIndex(index);
         setReconnecting(true);
+         // auto-start next step immediately after returning home
+         setAutoStartQueued(true);
       }
     }
   }, []);
+
+  // Auto-start once the dialog opens / state restores
+  useEffect(() => {
+    if (!autoStartQueued) return;
+    if (!reconnecting) return;
+    if (!reconnectQueue.length) return;
+    if (currentReconnectIndex >= reconnectQueue.length) return;
+
+    setAutoStartQueued(false);
+    // Avoid blocking render; let dialog mount then redirect
+    queueMicrotask(() => {
+      void handleReconnectNext();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartQueued, reconnecting, reconnectQueue.length, currentReconnectIndex]);
 
   const currentChannel = reconnectQueue[currentReconnectIndex];
 
@@ -210,7 +231,7 @@ export function PipelineHealthBar() {
             <AlertDialogDescription>
               {currentChannel ? (
                 <>
-                  Click "Connect" to reconnect <strong>{currentChannel.channel_title}</strong>.
+                  We’ll open Google now to reconnect <strong>{currentChannel.channel_title}</strong>.
                   <br /><br />
                   You'll be redirected to Google to authorize this channel. After completing, you'll be brought back to continue with the next channel.
                 </>
@@ -243,14 +264,11 @@ export function PipelineHealthBar() {
               setReconnecting(false);
               setReconnectQueue([]);
               setCurrentReconnectIndex(0);
+              setAutoStartQueued(false);
             }}>
               Cancel
             </AlertDialogCancel>
-            {currentChannel && (
-              <AlertDialogAction onClick={handleReconnectNext}>
-                Connect {currentChannel.channel_title}
-              </AlertDialogAction>
-            )}
+            {/* No per-channel action needed; flow auto-continues */}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
