@@ -12,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw, Link2 } from "lucide-react";
 
 interface DisconnectedChannel {
   id: string;
@@ -34,6 +34,9 @@ export function PipelineHealthBar() {
   const [health, setHealth] = useState<Health | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectQueue, setReconnectQueue] = useState<DisconnectedChannel[]>([]);
+  const [currentReconnectIndex, setCurrentReconnectIndex] = useState(0);
 
   const loadHealth = async () => {
     if (!user) return;
@@ -103,22 +106,65 @@ export function PipelineHealthBar() {
     const parts: string[] = [];
     if (health.disconnectedChannels.length > 0) {
       const names = health.disconnectedChannels.map((c) => c.channel_title).join(", ");
-      parts.push(`${health.disconnectedChannels.length} channel(s) need reconnect (${names})`);
+      parts.push(`${health.disconnectedChannels.length} channel(s) need reconnect: ${names}`);
     }
     if (health.recentAuthFailures > 0) parts.push(`${health.recentAuthFailures} auth failure(s)`);
     if (health.stuckUploading > 0) parts.push(`${health.stuckUploading} stuck upload(s)`);
     return parts.join(" • ");
   }, [health]);
 
-  const handleReconnect = async () => {
-    if (!session?.access_token) return;
+  // Start reconnecting all channels - opens Google auth for each one sequentially
+  const handleReconnectAll = () => {
+    if (!health?.disconnectedChannels.length) return;
+    setReconnectQueue(health.disconnectedChannels);
+    setCurrentReconnectIndex(0);
+    setReconnecting(true);
+  };
+
+  const handleReconnectNext = async () => {
+    if (!session?.access_token || currentReconnectIndex >= reconnectQueue.length) {
+      setReconnecting(false);
+      setReconnectQueue([]);
+      setCurrentReconnectIndex(0);
+      return;
+    }
+
     const { data } = await supabase.functions.invoke("youtube-auth", {
       body: { action: "get_auth_url", prompt_type: "select_account" },
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
 
-    if (data?.url) window.location.href = data.url;
+    if (data?.url) {
+      // Store reconnect state in sessionStorage so we can continue after redirect
+      sessionStorage.setItem("reconnect_queue", JSON.stringify(reconnectQueue));
+      sessionStorage.setItem("reconnect_index", String(currentReconnectIndex + 1));
+      window.location.href = data.url;
+    }
   };
+
+  // Check if we need to continue reconnecting after a redirect
+  useEffect(() => {
+    const storedQueue = sessionStorage.getItem("reconnect_queue");
+    const storedIndex = sessionStorage.getItem("reconnect_index");
+    
+    if (storedQueue && storedIndex) {
+      const queue = JSON.parse(storedQueue) as DisconnectedChannel[];
+      const index = parseInt(storedIndex, 10);
+      
+      // Clear storage
+      sessionStorage.removeItem("reconnect_queue");
+      sessionStorage.removeItem("reconnect_index");
+      
+      // If there are more channels to reconnect, continue
+      if (index < queue.length) {
+        setReconnectQueue(queue);
+        setCurrentReconnectIndex(index);
+        setReconnecting(true);
+      }
+    }
+  }, []);
+
+  const currentChannel = reconnectQueue[currentReconnectIndex];
 
   if (!user || !hasIssue) return null;
 
@@ -136,9 +182,16 @@ export function PipelineHealthBar() {
           <Button variant="outline" size="sm" onClick={() => setDetailsOpen(true)}>
             View details
           </Button>
-          <Button variant="default" size="sm" onClick={handleReconnect}>
-            Reconnect
-          </Button>
+          {(health?.disconnectedChannels?.length ?? 0) > 1 ? (
+            <Button variant="default" size="sm" onClick={handleReconnectAll}>
+              <Link2 className="w-4 h-4 mr-1" />
+              Reconnect All ({health?.disconnectedChannels.length})
+            </Button>
+          ) : (
+            <Button variant="default" size="sm" onClick={handleReconnectAll}>
+              Reconnect
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={loadHealth} disabled={loading}>
             <RefreshCw className={"w-4 h-4" + (loading ? " animate-spin" : "")} />
           </Button>
@@ -146,16 +199,70 @@ export function PipelineHealthBar() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Most stalls are caused by a channel authorization expiring/revoked. We auto-stop retrying those channels and show you here.
+        We automatically refresh tokens before they expire. If channels still disconnect, it means Google revoked access (changed password, removed app permissions, etc.).
       </p>
 
+      {/* Reconnect All Dialog */}
+      <AlertDialog open={reconnecting} onOpenChange={setReconnecting}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reconnect Channels ({currentReconnectIndex + 1}/{reconnectQueue.length})</AlertDialogTitle>
+            <AlertDialogDescription>
+              {currentChannel ? (
+                <>
+                  Click "Connect" to reconnect <strong>{currentChannel.channel_title}</strong>.
+                  <br /><br />
+                  You'll be redirected to Google to authorize this channel. After completing, you'll be brought back to continue with the next channel.
+                </>
+              ) : (
+                "All channels have been reconnected!"
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {currentChannel && (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card">
+              {currentChannel.channel_thumbnail ? (
+                <img
+                  src={currentChannel.channel_thumbnail}
+                  alt=""
+                  className="w-10 h-10 rounded-full"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-muted" />
+              )}
+              <div>
+                <p className="font-medium text-foreground">{currentChannel.channel_title}</p>
+                <p className="text-xs text-muted-foreground">Channel {currentReconnectIndex + 1} of {reconnectQueue.length}</p>
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setReconnecting(false);
+              setReconnectQueue([]);
+              setCurrentReconnectIndex(0);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            {currentChannel && (
+              <AlertDialogAction onClick={handleReconnectNext}>
+                Connect {currentChannel.channel_title}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Details Dialog */}
       <AlertDialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>What happened?</AlertDialogTitle>
             <AlertDialogDescription>
-              The uploader is hitting Google token refresh errors ("invalid_grant") for some channels, meaning the channel access was revoked/expired.
-              Those videos can't upload until you reconnect the channel.
+              Channels disconnect when Google revokes access (password change, removed permissions, etc.). 
+              We now proactively refresh tokens before they expire, but revoked access requires manual reconnection.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -202,7 +309,12 @@ export function PipelineHealthBar() {
 
           <AlertDialogFooter>
             <AlertDialogCancel>Close</AlertDialogCancel>
-            <AlertDialogAction onClick={handleReconnect}>Reconnect channel(s)</AlertDialogAction>
+            <AlertDialogAction onClick={handleReconnectAll}>
+              {(health?.disconnectedChannels?.length ?? 0) > 1 
+                ? `Reconnect All (${health?.disconnectedChannels.length})`
+                : "Reconnect channel"
+              }
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
