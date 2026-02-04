@@ -334,6 +334,7 @@ export type Database = {
           channel_thumbnail: string | null
           channel_title: string
           created_at: string
+          google_email: string | null
           id: string
           is_active: boolean | null
           refresh_token: string
@@ -347,6 +348,7 @@ export type Database = {
           channel_thumbnail?: string | null
           channel_title: string
           created_at?: string
+          google_email?: string | null
           id?: string
           is_active?: boolean | null
           refresh_token: string
@@ -360,6 +362,7 @@ export type Database = {
           channel_thumbnail?: string | null
           channel_title?: string
           created_at?: string
+          google_email?: string | null
           id?: string
           is_active?: boolean | null
           refresh_token?: string
