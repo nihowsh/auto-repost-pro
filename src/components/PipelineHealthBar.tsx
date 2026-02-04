@@ -18,6 +18,7 @@ interface DisconnectedChannel {
   id: string;
   channel_title: string;
   channel_thumbnail: string | null;
+  google_email: string | null;
 }
 
 type Health = {
@@ -49,7 +50,7 @@ export function PipelineHealthBar() {
       const [channelsRes, stuckRes, failedRes] = await Promise.all([
         supabase
           .from("youtube_channels")
-          .select("id, channel_title, channel_thumbnail")
+          .select("id, channel_title, channel_thumbnail, google_email")
           .eq("is_active", false),
         supabase
           .from("videos")
@@ -69,6 +70,7 @@ export function PipelineHealthBar() {
         id: c.id,
         channel_title: c.channel_title,
         channel_thumbnail: c.channel_thumbnail,
+        google_email: c.google_email,
       }));
       const stuckUploading = stuckRes.count ?? 0;
       const authFailures = failedRes.data ?? [];
@@ -133,8 +135,15 @@ export function PipelineHealthBar() {
       return;
     }
 
+    const currentChannel = reconnectQueue[currentReconnectIndex];
+    
+    // Pass login_hint to pre-select the correct Google account
     const { data } = await supabase.functions.invoke("youtube-auth", {
-      body: { action: "get_auth_url", prompt_type: "select_account" },
+      body: { 
+        action: "get_auth_url", 
+        prompt_type: "select_account",
+        login_hint: currentChannel.google_email || undefined,
+      },
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
 
@@ -231,9 +240,13 @@ export function PipelineHealthBar() {
             <AlertDialogDescription>
               {currentChannel ? (
                 <>
-                  We’ll open Google now to reconnect <strong>{currentChannel.channel_title}</strong>.
+                  We'll open Google now to reconnect <strong>{currentChannel.channel_title}</strong>.
                   <br /><br />
-                  You'll be redirected to Google to authorize this channel. After completing, you'll be brought back to continue with the next channel.
+                  {currentChannel.google_email ? (
+                    <>The correct account ({currentChannel.google_email}) will be pre-selected. Just click "Allow" to authorize.</>
+                  ) : (
+                    <>You'll be redirected to Google to authorize this channel. After completing, you'll be brought back to continue with the next channel.</>
+                  )}
                 </>
               ) : (
                 "All channels have been reconnected!"
@@ -254,7 +267,9 @@ export function PipelineHealthBar() {
               )}
               <div>
                 <p className="font-medium text-foreground">{currentChannel.channel_title}</p>
-                <p className="text-xs text-muted-foreground">Channel {currentReconnectIndex + 1} of {reconnectQueue.length}</p>
+                <p className="text-xs text-muted-foreground">
+                  {currentChannel.google_email || `Channel ${currentReconnectIndex + 1} of ${reconnectQueue.length}`}
+                </p>
               </div>
             </div>
           )}
@@ -301,7 +316,12 @@ export function PipelineHealthBar() {
                       ) : (
                         <div className="w-6 h-6 rounded-full bg-muted" />
                       )}
-                      <span className="text-sm text-foreground">{ch.channel_title}</span>
+                      <div className="flex flex-col">
+                        <span className="text-sm text-foreground">{ch.channel_title}</span>
+                        {ch.google_email && (
+                          <span className="text-xs text-muted-foreground">{ch.google_email}</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

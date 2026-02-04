@@ -36,28 +36,35 @@ serve(async (req) => {
       });
     }
 
-    const { action, code } = await req.json();
+    const body = await req.json();
+    const { action, code, login_hint, prompt_type } = body;
     const redirectUri = `${req.headers.get('origin')}/auth/callback`;
 
     if (action === 'get_auth_url') {
-      const { prompt_type } = await req.json().catch(() => ({}));
       const scopes = [
         'https://www.googleapis.com/auth/youtube.upload',
         'https://www.googleapis.com/auth/youtube.readonly',
         'https://www.googleapis.com/auth/youtube',
         'https://www.googleapis.com/auth/yt-analytics.readonly',
+        'https://www.googleapis.com/auth/userinfo.email', // Added to get user email
       ].join(' ');
 
       // Use select_account to add new channels, consent for re-auth
       const promptValue = prompt_type === 'select_account' ? 'select_account consent' : 'consent';
 
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      let authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${GOOGLE_CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&response_type=code` +
         `&scope=${encodeURIComponent(scopes)}` +
         `&access_type=offline` +
         `&prompt=${encodeURIComponent(promptValue)}`;
+
+      // Add login_hint if provided - this pre-selects the Google account
+      if (login_hint) {
+        authUrl += `&login_hint=${encodeURIComponent(login_hint)}`;
+        console.log('Generated auth URL with login_hint:', login_hint);
+      }
 
       console.log('Generated auth URL for user:', user.id, 'prompt:', promptValue);
       return new Response(JSON.stringify({ url: authUrl }), {
@@ -82,6 +89,22 @@ serve(async (req) => {
       const tokens = await tokenResponse.json();
       if (tokens.error) {
         throw new Error(tokens.error_description || tokens.error);
+      }
+
+      // Fetch user email from Google userinfo endpoint
+      let googleEmail: string | null = null;
+      try {
+        const userInfoResponse = await fetch(
+          'https://www.googleapis.com/oauth2/v3/userinfo',
+          { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+        );
+        if (userInfoResponse.ok) {
+          const userInfo = await userInfoResponse.json();
+          googleEmail = userInfo.email || null;
+          console.log('Fetched Google email:', googleEmail);
+        }
+      } catch (emailErr) {
+        console.warn('Failed to fetch Google email:', emailErr);
       }
 
       // Get channel info
@@ -110,6 +133,7 @@ serve(async (req) => {
           refresh_token: tokens.refresh_token,
           token_expires_at: expiresAt.toISOString(),
           is_active: true,
+          google_email: googleEmail, // Store the Google email for login_hint
         }, { onConflict: 'user_id,channel_id' });
 
       if (insertError) {
@@ -117,7 +141,7 @@ serve(async (req) => {
         throw new Error('Failed to save channel');
       }
 
-      console.log('Channel connected:', channel.snippet.title);
+      console.log('Channel connected:', channel.snippet.title, 'with email:', googleEmail);
       return new Response(JSON.stringify({ 
         success: true, 
         channel_title: channel.snippet.title 

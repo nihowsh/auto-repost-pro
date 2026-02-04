@@ -4,6 +4,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
+interface QueuedChannel {
+  id: string;
+  channel_title: string;
+  channel_thumbnail: string | null;
+  google_email: string | null;
+}
+
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -66,14 +73,20 @@ export default function AuthCallback() {
         const storedQueue = sessionStorage.getItem('reconnect_queue');
         const storedIndex = sessionStorage.getItem('reconnect_index');
         if (storedQueue && storedIndex) {
-          const queue = JSON.parse(storedQueue) as unknown[];
+          const queue = JSON.parse(storedQueue) as QueuedChannel[];
           const index = parseInt(storedIndex, 10);
 
           if (Number.isFinite(index) && index < queue.length) {
+            const nextChannel = queue[index];
             setMessage(`Connected to ${connectedName}. Redirecting to next channel (${index + 1}/${queue.length})...`);
 
+            // Pass login_hint for the next channel to pre-select the correct account
             const { data: nextData, error: nextErr } = await supabase.functions.invoke('youtube-auth', {
-              body: { action: 'get_auth_url', prompt_type: 'select_account' },
+              body: { 
+                action: 'get_auth_url', 
+                prompt_type: 'select_account',
+                login_hint: nextChannel.google_email || undefined,
+              },
               headers: {
                 Authorization: `Bearer ${session.access_token}`,
               },
