@@ -9,6 +9,8 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
+const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -20,12 +22,107 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
  * 2. Have scheduled_publish_at <= NOW
  * 3. Have video_file_path (file uploaded by local runner)
  * 
- * Then triggers video-worker for each (respecting per-channel limits)
+ * Also proactively refreshes tokens before they expire to prevent disconnects.
  */
+
+// ───────────────────────────────────────────────────────────────────────────
+// Proactive Token Refresh - prevents channels from disconnecting
+// ───────────────────────────────────────────────────────────────────────────
+
+async function proactiveTokenRefresh() {
+  console.log("[scheduled-publisher] Running proactive token refresh...");
+  
+  // Find channels with tokens expiring in the next 30 minutes
+  const expiryThreshold = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  
+  const { data: expiringChannels, error } = await supabase
+    .from("youtube_channels")
+    .select("id, channel_title, refresh_token, token_expires_at")
+    .eq("is_active", true)
+    .lt("token_expires_at", expiryThreshold);
+  
+  if (error) {
+    console.warn("[scheduled-publisher] Failed to query expiring channels:", error);
+    return { refreshed: 0, failed: 0 };
+  }
+  
+  if (!expiringChannels || expiringChannels.length === 0) {
+    console.log("[scheduled-publisher] No channels need token refresh");
+    return { refreshed: 0, failed: 0 };
+  }
+  
+  console.log(`[scheduled-publisher] Found ${expiringChannels.length} channels with expiring tokens`);
+  
+  let refreshed = 0;
+  let failed = 0;
+  
+  for (const channel of expiringChannels) {
+    try {
+      console.log(`[scheduled-publisher] Refreshing token for channel: ${channel.channel_title}`);
+      
+      const resp = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          refresh_token: channel.refresh_token,
+          grant_type: "refresh_token",
+        }),
+      });
+      
+      if (!resp.ok) {
+        const txt = await resp.text();
+        const isInvalidGrant = txt.includes("invalid_grant");
+        
+        if (isInvalidGrant) {
+          console.error(`[scheduled-publisher] Channel ${channel.channel_title} has invalid_grant - marking inactive`);
+          await supabase
+            .from("youtube_channels")
+            .update({ is_active: false })
+            .eq("id", channel.id);
+        } else {
+          console.warn(`[scheduled-publisher] Token refresh failed for ${channel.channel_title}: ${txt}`);
+        }
+        failed++;
+        continue;
+      }
+      
+      const data = await resp.json();
+      const newExpiresAt = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
+      
+      await supabase
+        .from("youtube_channels")
+        .update({
+          access_token: data.access_token,
+          token_expires_at: newExpiresAt,
+        })
+        .eq("id", channel.id);
+      
+      console.log(`[scheduled-publisher] Successfully refreshed token for ${channel.channel_title}, expires at ${newExpiresAt}`);
+      refreshed++;
+    } catch (err) {
+      console.error(`[scheduled-publisher] Error refreshing token for ${channel.channel_title}:`, err);
+      failed++;
+    }
+  }
+  
+  console.log(`[scheduled-publisher] Token refresh complete. Refreshed: ${refreshed}, Failed: ${failed}`);
+  return { refreshed, failed };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Main publishing logic
+// ───────────────────────────────────────────────────────────────────────────
 
 async function publishDueVideos() {
   const now = new Date().toISOString();
   console.log(`[scheduled-publisher] Running at ${now}`);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 0: Proactive token refresh - prevents disconnects!
+  // ─────────────────────────────────────────────────────────────────────────
+  const tokenResult = await proactiveTokenRefresh();
 
   // ─────────────────────────────────────────────────────────────────────────
   // Self-healing: requeue stuck uploads + clear expired locks
@@ -80,12 +177,12 @@ async function publishDueVideos() {
 
   if (queryError) {
     console.error("[scheduled-publisher] Query error:", queryError);
-    return { processed: 0, error: queryError.message };
+    return { processed: 0, error: queryError.message, tokenRefresh: tokenResult };
   }
 
   if (!dueVideos || dueVideos.length === 0) {
     console.log("[scheduled-publisher] No due videos found");
-    return { processed: 0 };
+    return { processed: 0, tokenRefresh: tokenResult };
   }
 
   console.log(`[scheduled-publisher] Found ${dueVideos.length} due videos`);
@@ -152,7 +249,7 @@ async function publishDueVideos() {
   }
 
   console.log(`[scheduled-publisher] Done. Processed: ${processed}, Errors: ${errors.length}`);
-  return { processed, errors: errors.length > 0 ? errors : undefined };
+  return { processed, errors: errors.length > 0 ? errors : undefined, tokenRefresh: tokenResult };
 }
 
 serve(async (req) => {
