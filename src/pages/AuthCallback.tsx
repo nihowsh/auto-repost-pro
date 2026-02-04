@@ -60,8 +60,42 @@ export default function AuthCallback() {
         if (error) throw error;
 
         setStatus('success');
-        setMessage(`Connected to ${data.channel_title || 'YouTube'}!`);
-        setTimeout(() => navigate('/'), 2000);
+        const connectedName = data.channel_title || 'YouTube';
+
+        // If we're in a reconnect-all sequence, continue automatically from here.
+        const storedQueue = sessionStorage.getItem('reconnect_queue');
+        const storedIndex = sessionStorage.getItem('reconnect_index');
+        if (storedQueue && storedIndex) {
+          const queue = JSON.parse(storedQueue) as unknown[];
+          const index = parseInt(storedIndex, 10);
+
+          if (Number.isFinite(index) && index < queue.length) {
+            setMessage(`Connected to ${connectedName}. Redirecting to next channel (${index + 1}/${queue.length})...`);
+
+            const { data: nextData, error: nextErr } = await supabase.functions.invoke('youtube-auth', {
+              body: { action: 'get_auth_url', prompt_type: 'select_account' },
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            });
+            if (nextErr) throw nextErr;
+
+            // Increment index for the *next* callback before redirecting.
+            sessionStorage.setItem('reconnect_index', String(index + 1));
+
+            if (nextData?.url) {
+              window.location.href = nextData.url;
+              return;
+            }
+          }
+
+          // Done (or invalid state) — clear and return home
+          sessionStorage.removeItem('reconnect_queue');
+          sessionStorage.removeItem('reconnect_index');
+        }
+
+        setMessage(`Connected to ${connectedName}!`);
+        setTimeout(() => navigate('/'), 1200);
       } catch (err: any) {
         console.error('Callback error:', err);
         setStatus('error');
