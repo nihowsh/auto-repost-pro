@@ -598,12 +598,35 @@ async function processLongformProject(project) {
     console.log(`📹 Combined video duration: ${videoDuration.toFixed(1)}s`);
 
     // 5) Background music (optional) - with duration adjustment
+    // NOTE: background_music_url is actually a STORAGE PATH (e.g. "userId/bundled/track.mp3")
+    // stored in the "background-music" bucket, NOT an HTTP URL
     let bgPath = null;
     if (project.background_music_url) {
       try {
-        console.log("🎵 Downloading background music...");
+        console.log("🎵 Downloading background music from storage...");
         const rawBgPath = path.join(workDir, "bg_raw.mp3");
-        await downloadUrlToFile(project.background_music_url, rawBgPath);
+        
+        // Download from the background-music storage bucket using service key
+        const bgMusicStoragePath = project.background_music_url;
+        const encodedPath = bgMusicStoragePath.split("/").map(encodeURIComponent).join("/");
+        const bgMusicUrl = `${supabaseUrl}/storage/v1/object/background-music/${encodedPath}`;
+        
+        console.log("📥 Background music storage path:", bgMusicStoragePath);
+        const res = await fetch(bgMusicUrl, {
+          headers: {
+            apikey: supabaseServiceKey,
+            Authorization: `Bearer ${supabaseServiceKey}`,
+          },
+        });
+        
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(`Background music download failed (${res.status}): ${t}`);
+        }
+        
+        const buf = Buffer.from(await res.arrayBuffer());
+        fs.writeFileSync(rawBgPath, buf);
+        console.log("✅ Background music downloaded:", rawBgPath);
         
         // Adjust music duration to match video
         bgPath = path.join(workDir, "bg.mp3");
