@@ -133,31 +133,55 @@ async function authenticate() {
   console.log("✅ Auth OK");
 }
 
-async function supabaseRequest(endpoint, options = {}) {
+async function supabaseRequest(endpoint, options = {}, retries = 3) {
   const url = `${supabaseUrl}/rest/v1/${endpoint}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      apikey: supabaseServiceKey,
-      Authorization: `Bearer ${supabaseServiceKey}`,
-      "Content-Type": "application/json",
-      Prefer: options.prefer || "return=representation",
-      ...(options.headers || {}),
-    },
-  });
+  let lastErr;
 
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Supabase request failed: ${t}`);
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          apikey: supabaseServiceKey,
+          Authorization: `Bearer ${supabaseServiceKey}`,
+          "Content-Type": "application/json",
+          Prefer: options.prefer || "return=representation",
+          ...(options.headers || {}),
+        },
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Supabase request failed: ${t}`);
+      }
+
+      const text = await res.text();
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || "");
+      const isTransient =
+        msg.includes("ECONNABORTED") ||
+        msg.includes("ECONNRESET") ||
+        msg.includes("ETIMEDOUT") ||
+        msg.includes("socket hang up") ||
+        msg.includes("fetch failed") ||
+        msg.includes("network");
+
+      if (!isTransient || attempt === retries) break;
+
+      const waitMs = 1000 * attempt;
+      console.warn(`⚠️ Supabase request attempt ${attempt} failed (${msg}). Retrying in ${waitMs}ms...`);
+      await sleep(waitMs);
+    }
   }
 
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+  throw lastErr || new Error("Supabase request failed (unknown)");
 }
 
 // Only fetch pending long-form projects
