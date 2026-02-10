@@ -1,0 +1,1 @@
+ALTER TABLE public.youtube_channels DROP CONSTRAINT youtube_channels_channel_id_key;
