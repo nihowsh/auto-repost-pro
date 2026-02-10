@@ -66,9 +66,16 @@ export default function AuthCallback() {
 
         if (error) {
           // Extract the actual error message from the edge function response
-          const details = (error as any)?.context?.body 
-            ? JSON.parse((error as any).context.body)?.error 
-            : null;
+          let details: string | null = null;
+          try {
+            const body = (error as any)?.context?.body;
+            if (body) {
+              const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+              details = parsed?.error || null;
+            }
+          } catch {
+            // body wasn't valid JSON, ignore
+          }
           throw new Error(details || error.message);
         }
 
