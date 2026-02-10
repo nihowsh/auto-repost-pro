@@ -64,7 +64,13 @@ export default function AuthCallback() {
           },
         });
 
-        if (error) throw error;
+        if (error) {
+          // Extract the actual error message from the edge function response
+          const details = (error as any)?.context?.body 
+            ? JSON.parse((error as any).context.body)?.error 
+            : null;
+          throw new Error(details || error.message);
+        }
 
         setStatus('success');
         const connectedName = data.channel_title || 'YouTube';
